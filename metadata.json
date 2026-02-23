@@ -1,0 +1,9 @@
+{
+  "name": "Jay Travel Planner Pro",
+  "description": "A mobile-optimized, collaborative travel planning tool with AI-powered itinerary advice and expense tracking.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
