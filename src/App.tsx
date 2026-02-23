@@ -24,12 +24,14 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, CURRENCY_MAP, COUNTRY_LIST } from './utils';
-import { Trip, Activity, Expense, Accommodation } from './types';
+import { Trip, Activity, Expense, Accommodation, ChecklistItem } from './types';
 import { geminiService } from './services/geminiService';
 import { io, Socket } from 'socket.io-client';
 import { format, addDays, differenceInDays, parseISO } from 'date-fns';
-import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import { notoSansTCRegular } from './assets/NotoSansTC-Regular';
+import { sourceHanSerifBold } from './assets/SourceHanSerif-Bold';
 
 let socket: Socket;
 
@@ -38,6 +40,7 @@ export default function App() {
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
   const [activeTab, setActiveTab] = useState<string>('');
   const [isAddingTrip, setIsAddingTrip] = useState(false);
@@ -80,14 +83,13 @@ export default function App() {
   });
   const [loading, setLoading] = useState(false);
   const [aiAdvice, setAiAdvice] = useState<Record<string, string>>({});
-  const [travelTimes, setTravelTimes] = useState<Record<string, string>>({});
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
-  useEffect(() => {
-    if (activities.length > 0) {
-      calculateAllTravelTimes();
-    }
-  }, [activities]);
+  // useEffect(() => {
+  //   if (activities.length > 0) {
+  //     calculateAllTravelTimes();
+  //   }
+  // }, [activities]);
 
   useEffect(() => {
     if (selectedTrip && activities.length > 0) {
@@ -150,6 +152,10 @@ export default function App() {
       if (selectedTrip) fetchAccommodations(selectedTrip.id);
     });
 
+    socket.on('checklist_updated', () => {
+      if (selectedTrip) fetchChecklist(selectedTrip.id);
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -179,11 +185,17 @@ export default function App() {
     setAccommodations(data);
   };
 
+  const fetchChecklist = async (tripId: string) => {
+    const res = await fetch(`/api/trips/${tripId}/checklist`);
+    setChecklist(await res.json());
+  };
+
   const handleSelectTrip = (trip: Trip) => {
     setSelectedTrip(trip);
     fetchActivities(trip.id);
     fetchExpenses(trip.id);
     fetchAccommodations(trip.id);
+    fetchChecklist(trip.id);
     socket.emit('join_trip', trip.id);
     setActiveTab(trip.start_date);
   };
@@ -382,102 +394,158 @@ export default function App() {
   const generatePdfBlob = async (): Promise<Blob | null> => {
     if (!selectedTrip) return null;
     
-    const element = document.createElement('div');
-    element.className = 'fixed top-[-9999px] left-[-9999px] w-[800px] bg-white p-10 font-sans text-zinc-900';
-    element.innerHTML = `
-      <div style="border-bottom: 2px solid #18181b; padding-bottom: 20px; margin-bottom: 30px;">
-        <h1 style="font-size: 32px; font-weight: 800; margin-bottom: 5px;">${selectedTrip.name}</h1>
-        <div style="display: flex; justify-between; align-items: center;">
-          <p style="font-size: 14px; color: #71717a; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em;">
-            ${selectedTrip.country} | ${selectedTrip.start_date} ~ ${selectedTrip.end_date}
-          </p>
-        </div>
-      </div>
-
-      ${activities.some(a => a.is_flight) ? `
-        <div style="margin-bottom: 30px;">
-          <h2 style="font-size: 12px; font-weight: 800; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 15px;">航班資訊</h2>
-          <div style="display: grid; gap: 10px;">
-            ${activities.filter(a => a.is_flight).map(f => `
-              <div style="padding: 15px; border: 1px solid #e4e4e7; border-radius: 12px; background: #f8fafc;">
-                <div style="font-weight: 800; font-size: 16px;">${f.activity}</div>
-                <div style="font-size: 12px; color: #71717a; margin-top: 5px;">${f.date} | ${f.start_time} - ${f.end_time}</div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      ` : ''}
-
-      ${accommodations.length > 0 ? `
-        <div style="margin-bottom: 30px;">
-          <h2 style="font-size: 12px; font-weight: 800; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 15px;">住宿安排</h2>
-          <div style="display: grid; gap: 10px;">
-            ${accommodations.map(acc => `
-              <div style="padding: 15px; border: 1px solid #e4e4e7; border-radius: 12px;">
-                <div style="font-weight: 800; font-size: 16px;">${acc.name}</div>
-                <div style="font-size: 12px; color: #71717a; margin-top: 5px;">${acc.address}</div>
-                <div style="font-size: 11px; font-weight: 700; color: #18181b; margin-top: 5px;">${acc.check_in} ~ ${acc.check_out}</div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      ` : ''}
-
-      <div style="margin-bottom: 30px;">
-        <h2 style="font-size: 12px; font-weight: 800; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 20px;">每日行程</h2>
-        ${getDateRange().map((date, i) => {
-          const dayActs = activities.filter(a => a.date === date && !a.is_flight);
-          return `
-            <div style="margin-bottom: 25px;">
-              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
-                <div style="background: #18181b; color: white; padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 800;">Day ${i + 1}</div>
-                <div style="font-size: 14px; font-weight: 700; color: #71717a;">${date}</div>
-              </div>
-              <div style="border-left: 2px solid #e4e4e7; margin-left: 15px; padding-left: 25px;">
-                ${dayActs.length === 0 ? '<p style="font-size: 13px; color: #a1a1aa; font-style: italic;">今日無行程</p>' : dayActs.map(a => `
-                  <div style="margin-bottom: 20px; position: relative;">
-                    <div style="position: absolute; left: -31px; top: 6px; width: 10px; height: 10px; background: white; border: 2px solid #18181b; border-radius: 50%;"></div>
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                      <span style="font-size: 11px; font-weight: 800; background: #f4f4f5; padding: 2px 6px; border-radius: 4px;">${a.start_time} - ${a.end_time}</span>
-                      <span style="font-size: 15px; font-weight: 800;">${a.activity}</span>
-                    </div>
-                    ${a.note ? `<p style="font-size: 12px; color: #71717a; margin-top: 4px; line-height: 1.5;">${a.note}</p>` : ''}
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>
-
-      <div style="margin-top: 50px; border-top: 1px solid #e4e4e7; padding-top: 20px; text-align: center; color: #a1a1aa; font-size: 10px;">
-        Generated by AI Travel Planner
-      </div>
-    `;
-    
-    document.body.appendChild(element);
-    
     try {
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff'
+      const doc = new jsPDF();
+
+      // Add the font to the virtual file system
+      if (notoSansTCRegular) {
+        doc.addFileToVFS('NotoSansTC-Regular.ttf', notoSansTCRegular);
+        doc.addFont('NotoSansTC-Regular.ttf', 'NotoSansTC', 'normal');
+        doc.setFont('NotoSansTC');
+      }
+
+      if (sourceHanSerifBold) {
+        doc.addFileToVFS('SourceHanSerif-Bold.ttf', sourceHanSerifBold);
+        doc.addFont('SourceHanSerif-Bold.ttf', 'SourceHanSerif', 'bold');
+      }
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      
+      // Header
+      doc.setFont('SourceHanSerif', 'bold');
+      doc.setFontSize(24);
+      doc.setTextColor('#18181b');
+      doc.text(selectedTrip.name, 15, 20);
+      
+      doc.setFont('NotoSansTC', 'normal');
+      doc.setFontSize(10);
+      doc.setTextColor('#71717a');
+      doc.text(`${selectedTrip.country} | ${selectedTrip.start_date} ~ ${selectedTrip.end_date}`, 15, 28);
+      
+      doc.setDrawColor('#e4e4e7');
+      doc.line(15, 35, pageWidth - 15, 35);
+      
+      let currentY = 45;
+
+      // Flights
+      const flights = activities.filter(a => a.is_flight);
+      if (flights.length > 0) {
+        doc.setFont('SourceHanSerif', 'bold');
+        doc.setFontSize(12);
+        doc.setTextColor('#a1a1aa');
+        doc.text("航班資訊", 15, currentY);
+        doc.setFont('NotoSansTC', 'normal');
+        currentY += 8;
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [['航班/活動', '日期', '時間']],
+          body: flights.map(f => [f.activity, f.date, `${f.start_time} - ${f.end_time}`]),
+          theme: 'striped',
+          styles: { font: 'NotoSansTC', fontStyle: 'normal' },
+          headStyles: { fillColor: [24, 24, 27], textColor: [255, 255, 255] },
+          margin: { left: 15, right: 15 }
+        });
+        currentY = (doc as any).lastAutoTable.finalY + 15;
+      }
+
+      // Accommodations
+      if (accommodations.length > 0) {
+        doc.setFont('SourceHanSerif', 'bold');
+        doc.setFontSize(12);
+        doc.setTextColor('#a1a1aa');
+        doc.text("住宿安排", 15, currentY);
+        doc.setFont('NotoSansTC', 'normal');
+        currentY += 8;
+
+        autoTable(doc, {
+          startY: currentY,
+          head: [['飯店名稱', '地址', '日期']],
+          body: accommodations.map(acc => [acc.name, acc.address, `${acc.check_in} ~ ${acc.check_out}`]),
+          theme: 'grid',
+          styles: { font: 'NotoSansTC', fontStyle: 'normal' },
+          headStyles: { fillColor: [113, 113, 122], textColor: [255, 255, 255] },
+          margin: { left: 15, right: 15 }
+        });
+        currentY = (doc as any).lastAutoTable.finalY + 15;
+      }
+
+      // Daily Itinerary
+      doc.setFont('SourceHanSerif', 'bold');
+      doc.setFontSize(12);
+      doc.setTextColor('#a1a1aa');
+      doc.text("每日行程", 15, currentY);
+      doc.setFont('NotoSansTC', 'normal');
+      currentY += 10;
+
+      const dates = getDateRange();
+      dates.forEach((date, i) => {
+        const dayActs = activities.filter(a => a.date === date && !a.is_flight);
+        
+        if (currentY > 250) {
+          doc.addPage();
+          currentY = 20;
+        }
+
+        doc.setFontSize(10);
+        doc.setTextColor(255, 255, 255);
+        doc.setFillColor('#18181b');
+        doc.roundedRect(15, currentY - 5, 25, 7, 1, 1, 'F');
+        doc.text(`Day ${i + 1} (${format(parseISO(date), 'M/d')})`, 18, currentY);
+        
+        doc.setTextColor('#71717a');
+        // doc.text(date, 45, currentY);
+        currentY += 10;
+
+        if (dayActs.length === 0) {
+          doc.setFontSize(9);
+          doc.setTextColor('#a1a1aa');
+          doc.text("今日無行程", 25, currentY);
+          currentY += 10;
+        } else {
+          dayActs.forEach(a => {
+            if (currentY > 270) {
+              doc.addPage();
+              currentY = 20;
+            }
+            
+            doc.setFontSize(9);
+            doc.setTextColor('#18181b');
+            doc.text(`${a.start_time} - ${a.end_time}`, 25, currentY);
+            
+            doc.setFontSize(10);
+            doc.setFont('NotoSansTC', 'normal', 'bold');
+            doc.text(a.activity, 55, currentY);
+            doc.setFont('NotoSansTC', 'normal');
+            
+            if (a.note) {
+              currentY += 5;
+              doc.setFontSize(8);
+              doc.setTextColor('#71717a');
+              const splitNote = doc.splitTextToSize(a.note, pageWidth - 70);
+              doc.text(splitNote, 55, currentY);
+              currentY += (splitNote.length * 4);
+            }
+            
+            currentY += 8;
+          });
+        }
+        currentY += 5;
       });
-      
-      const imgData = canvas.toDataURL('image/png');
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      const imgProps = pdf.getImageProperties(imgData);
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-      
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-      return pdf.output('blob');
+
+      // Footer
+      const pageCount = (doc as any).internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFontSize(8);
+        doc.setTextColor('#a1a1aa');
+        doc.text("Generated by AI Travel Planner", pageWidth / 2, 285, { align: 'center' });
+      }
+
+      return doc.output('blob');
     } catch (err) {
       console.error('PDF generation failed:', err);
       return null;
-    } finally {
-      document.body.removeChild(element);
     }
   };
 
@@ -608,7 +676,71 @@ export default function App() {
     return Array.from({ length: days }, (_, i) => format(addDays(start, i), 'yyyy-MM-dd'));
   };
 
-  const renderTripList = () => (
+  function Checklist() {
+    const [newItem, setNewItem] = useState('');
+
+    const handleAddItem = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newItem.trim() || !selectedTrip) return;
+      
+      await fetch('/api/checklist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          id: crypto.randomUUID(),
+          trip_id: selectedTrip.id,
+          item: newItem.trim()
+        })
+      });
+      setNewItem('');
+    };
+
+    const handleToggleCheck = async (id: string, is_checked: boolean) => {
+      await fetch(`/api/checklist/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_checked: !is_checked })
+      });
+    };
+
+    const handleDeleteItem = async (id: string) => {
+      await fetch(`/api/checklist/${id}`, { method: 'DELETE' });
+    };
+
+    return (
+      <div className="bg-white p-4 rounded-2xl border border-zinc-200 shadow-sm">
+        <form onSubmit={handleAddItem} className="flex gap-2 mb-3">
+          <input 
+            value={newItem}
+            onChange={(e) => setNewItem(e.target.value)}
+            className="flex-1 p-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:ring-1 focus:ring-zinc-900 outline-none"
+            placeholder="新增準備物品..."
+          />
+          <button className="px-4 bg-zinc-900 text-white rounded-lg text-sm font-bold">新增</button>
+        </form>
+        <div className="space-y-2">
+          {checklist.map(item => (
+            <div key={item.id} className="flex items-center gap-3 p-2 hover:bg-zinc-50 rounded-md">
+              <input 
+                type="checkbox" 
+                checked={!!item.is_checked}
+                onChange={() => handleToggleCheck(item.id, !!item.is_checked)}
+                className="w-5 h-5 rounded-md border-zinc-300 text-zinc-900 focus:ring-zinc-900"
+              />
+              <span className={cn("flex-1 text-sm", item.is_checked && "line-through text-zinc-400")}>
+                {item.item}
+              </span>
+              <button onClick={() => handleDeleteItem(item.id)} className="text-zinc-400 hover:text-red-500">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  function renderTripList() { return (
     <div className="p-4 space-y-6 max-w-2xl mx-auto">
       <div className="flex justify-between items-center py-4">
         <h1 className="text-2xl font-bold tracking-tight text-zinc-900">我的旅程</h1>
@@ -656,9 +788,9 @@ export default function App() {
         )}
       </div>
     </div>
-  );
+  ); }
 
-  const renderTripDetail = () => {
+  function renderTripDetail() {
     if (!selectedTrip) return null;
     const dates = getDateRange();
     const currentActivities = activities.filter(a => a.date === activeTab);
@@ -717,7 +849,7 @@ export default function App() {
                     : "bg-white text-zinc-500 border-zinc-200"
                 )}
               >
-                Day {i + 1}
+                Day {i + 1} <span className="font-normal opacity-60 ml-1.5 text-[10px]">({format(parseISO(date), 'M/d')})</span>
               </button>
             ))}
           </div>
@@ -781,6 +913,11 @@ export default function App() {
                 </motion.div>
               )}
             </AnimatePresence>
+          </div>
+
+          <div className="space-y-4">
+            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">準備清單</h3>
+            <Checklist />
           </div>
 
           {/* Itinerary Section */}
@@ -869,17 +1006,10 @@ export default function App() {
                     )}
                   </motion.div>
 
-                  {/* Travel Time Indicator */}
+                  {/* Travel Time Indicator Removed */}
                   {idx < currentActivities.length - 1 && (
                     <div className="py-4 flex flex-col items-center">
-                      <div className="w-px h-6 bg-zinc-200" />
-                      <div className="my-1 px-3 py-1 bg-zinc-100 rounded-full text-[9px] font-bold text-zinc-400 flex items-center gap-1.5 border border-zinc-200">
-                        {activity.travel_mode === 'walking' && <div className="text-xs">🚶</div>}
-                        {activity.travel_mode === 'transit' && <div className="text-xs">🚌</div>}
-                        {activity.travel_mode === 'driving' && <div className="text-xs">🚗</div>}
-                        {travelTimes[`${activity.id}-${currentActivities[idx+1].id}`] || '計算中...'}
-                      </div>
-                      <div className="w-px h-6 bg-zinc-200" />
+                      <div className="w-px h-12 bg-zinc-200" />
                     </div>
                   )}
                 </div>
@@ -1504,6 +1634,8 @@ export default function App() {
       )}
     </div>
   );
+
+
 }
 
 function Modal({ title, children, onClose }: { title: string, children: React.ReactNode, onClose: () => void }) {

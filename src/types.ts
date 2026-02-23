@@ -38,3 +38,10 @@ export interface Expense {
   currency: string;
   date: string;
 }
+
+export interface ChecklistItem {
+  id: string;
+  trip_id: string;
+  item: string;
+  is_checked: boolean;
+}

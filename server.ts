@@ -56,6 +56,14 @@ db.exec(`
     date TEXT,
     FOREIGN KEY(trip_id) REFERENCES trips(id)
   );
+
+  CREATE TABLE IF NOT EXISTS checklist (
+    id TEXT PRIMARY KEY,
+    trip_id TEXT,
+    item TEXT,
+    is_checked INTEGER DEFAULT 0,
+    FOREIGN KEY(trip_id) REFERENCES trips(id)
+  );
 `);
 
 async function startServer() {
@@ -169,36 +177,68 @@ async function startServer() {
     db.prepare("DELETE FROM activities WHERE trip_id = ?").run(req.params.id);
     db.prepare("DELETE FROM accommodations WHERE trip_id = ?").run(req.params.id);
     db.prepare("DELETE FROM expenses WHERE trip_id = ?").run(req.params.id);
+    db.prepare("DELETE FROM checklist WHERE trip_id = ?").run(req.params.id);
     res.json({ status: "ok" });
   });
 
-  app.get("/api/travel-time", async (req, res) => {
-    const { origin, destination, mode } = req.query;
-    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-
-    if (!apiKey) {
-      return res.json({ duration: "需設定 API Key", distance: "" });
-    }
-
-    try {
-      const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin as string)}&destinations=${encodeURIComponent(destination as string)}&mode=${mode || 'transit'}&language=zh-TW&key=${apiKey}`;
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (data.status === 'OK') {
-        const element = data.rows[0].elements[0];
-        if (element.status === 'OK') {
-          return res.json({
-            duration: element.duration.text,
-            distance: element.distance.text
-          });
-        }
-      }
-      res.json({ duration: "無法計算", distance: "" });
-    } catch (error) {
-      res.status(500).json({ error: "API Error" });
-    }
+  app.get("/api/trips/:id/checklist", (req, res) => {
+    const checklist = db.prepare("SELECT * FROM checklist WHERE trip_id = ?").all(req.params.id);
+    res.json(checklist);
   });
+
+  app.post("/api/checklist", (req, res) => {
+    const { id, trip_id, item } = req.body;
+    db.prepare("INSERT INTO checklist (id, trip_id, item) VALUES (?, ?, ?)").run(id, trip_id, item);
+    io.to(trip_id).emit("checklist_updated");
+    res.json({ status: "ok" });
+  });
+
+  app.put("/api/checklist/:id", (req, res) => {
+    const { is_checked } = req.body;
+    db.prepare("UPDATE checklist SET is_checked = ? WHERE id = ?").run(is_checked ? 1 : 0, req.params.id);
+    const item = db.prepare("SELECT trip_id FROM checklist WHERE id = ?").get(req.params.id) as any;
+    if (item) {
+      io.to(item.trip_id).emit("checklist_updated");
+    }
+    res.json({ status: "ok" });
+  });
+
+  app.delete("/api/checklist/:id", (req, res) => {
+    const item = db.prepare("SELECT trip_id FROM checklist WHERE id = ?").get(req.params.id) as any;
+    if (item) {
+      db.prepare("DELETE FROM checklist WHERE id = ?").run(req.params.id);
+      io.to(item.trip_id).emit("checklist_updated");
+    }
+    res.json({ status: "ok" });
+  });
+
+  // app.get("/api/travel-time", async (req, res) => {
+  //   const { origin, destination, mode } = req.query;
+  //   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  //
+  //   if (!apiKey) {
+  //     return res.json({ duration: "需設定 API Key", distance: "" });
+  //   }
+  //
+  //   try {
+  //     const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin as string)}&destinations=${encodeURIComponent(destination as string)}&mode=${mode || 'transit'}&language=zh-TW&key=${apiKey}`;
+  //     const response = await fetch(url);
+  //     const data = await response.json();
+  //
+  //     if (data.status === 'OK') {
+  //       const element = data.rows[0].elements[0];
+  //       if (element.status === 'OK') {
+  //         return res.json({
+  //           duration: element.duration.text,
+  //           distance: element.distance.text
+  //         });
+  //       }
+  //     }
+  //     res.json({ duration: "無法計算", distance: "" });
+  //   } catch (error) {
+  //     res.status(500).json({ error: "API Error" });
+  //   }
+  // });
 
   app.post("/api/send-itinerary", async (req, res) => {
     const { email, tripName, pdfBase64 } = req.body;
