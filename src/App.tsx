@@ -26,14 +26,38 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn, CURRENCY_MAP, COUNTRY_LIST } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem } from './types';
 import { geminiService } from './services/geminiService';
-import { io, Socket } from 'socket.io-client';
+import { db } from './services/firebase';
+import { 
+  collection,
+  query,
+  where,
+  onSnapshot,
+  addDoc,
+  deleteDoc,
+  doc,
+  updateDoc,
+  getDocs,
+  Timestamp
+} from 'firebase/firestore';
 import { format, addDays, differenceInDays, parseISO } from 'date-fns';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { notoSansTCRegular } from './assets/NotoSansTC-Regular';
-import { sourceHanSerifBold } from './assets/SourceHanSerif-Bold';
+import { sourceHanSerifBold as notoSerifTCBold } from './assets/SourceHanSerif-Bold';
 
-let socket: Socket;
+
+
+const EXCHANGE_RATES: Record<string, number> = {
+  'TWD': 1,
+  'USD': 32.5,
+  'JPY': 0.21,
+  'EUR': 35.2,
+  'KRW': 0.024,
+  'HKD': 4.15,
+  'GBP': 41.5,
+  'AUD': 21.2,
+  'THB': 0.9,
+};
 
 export default function App() {
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -50,6 +74,7 @@ export default function App() {
   const [isExpenseAnalysisOpen, setIsExpenseAnalysisOpen] = useState(false);
   const [isAddingExpense, setIsAddingExpense] = useState(false);
   const [isCoreInfoExpanded, setIsCoreInfoExpanded] = useState(true);
+  const [isChecklistExpanded, setIsChecklistExpanded] = useState(true);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [exportEmail, setExportEmail] = useState('');
   const [isSendingEmail, setIsSendingEmail] = useState(false);
@@ -133,70 +158,78 @@ export default function App() {
         }
       }
     }
-    setTravelTimes(times);
+
   };
 
-  useEffect(() => {
-    socket = io();
+    useEffect(() => {
     fetchTrips();
+  }, []);
 
-    socket.on('activity_updated', () => {
-      if (selectedTrip) fetchActivities(selectedTrip.id);
+  useEffect(() => {
+    if (!selectedTrip) return;
+
+    const activitiesQuery = query(collection(db, "activities"), where("trip_id", "==", selectedTrip.id));
+    const expensesQuery = query(collection(db, "expenses"), where("trip_id", "==", selectedTrip.id));
+    const accommodationsQuery = query(collection(db, "accommodations"), where("trip_id", "==", selectedTrip.id));
+    const checklistQuery = query(collection(db, "checklist"), where("trip_id", "==", selectedTrip.id));
+
+    const unsubActivities = onSnapshot(activitiesQuery, (snapshot) => {
+      const activitiesData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return { ...data, id: doc.id };
+      }) as Activity[];
+      setActivities(activitiesData);
     });
 
-    socket.on('expense_updated', () => {
-      if (selectedTrip) fetchExpenses(selectedTrip.id);
+    const unsubExpenses = onSnapshot(expensesQuery, (snapshot) => {
+      const expensesData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return { ...data, id: doc.id };
+      }) as Expense[];
+      setExpenses(expensesData);
     });
 
-    socket.on('accommodation_updated', () => {
-      if (selectedTrip) fetchAccommodations(selectedTrip.id);
+    const unsubAccommodations = onSnapshot(accommodationsQuery, (snapshot) => {
+      const accommodationsData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return { ...data, id: doc.id };
+      }) as Accommodation[];
+      setAccommodations(accommodationsData);
     });
 
-    socket.on('checklist_updated', () => {
-      if (selectedTrip) fetchChecklist(selectedTrip.id);
+    const unsubChecklist = onSnapshot(checklistQuery, (snapshot) => {
+      const checklistData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return { ...data, id: doc.id };
+      }) as ChecklistItem[];
+      setChecklist(checklistData);
     });
 
     return () => {
-      socket.disconnect();
+      unsubActivities();
+      unsubExpenses();
+      unsubAccommodations();
+      unsubChecklist();
     };
   }, [selectedTrip]);
 
-  const fetchTrips = async () => {
-    const res = await fetch('/api/trips');
-    const data = await res.json();
-    setTrips(data);
+    const fetchTrips = async () => {
+    const tripsCollection = collection(db, "trips");
+    const tripsSnapshot = await getDocs(tripsCollection);
+    const tripsList = tripsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Trip[];
+    setTrips(tripsList);
   };
 
-  const fetchActivities = async (tripId: string) => {
-    const res = await fetch(`/api/trips/${tripId}/activities`);
-    const data = await res.json();
-    setActivities(data);
-  };
+  
 
-  const fetchExpenses = async (tripId: string) => {
-    const res = await fetch(`/api/trips/${tripId}/expenses`);
-    const data = await res.json();
-    setExpenses(data);
-  };
+  
 
-  const fetchAccommodations = async (tripId: string) => {
-    const res = await fetch(`/api/trips/${tripId}/accommodations`);
-    const data = await res.json();
-    setAccommodations(data);
-  };
+  
 
-  const fetchChecklist = async (tripId: string) => {
-    const res = await fetch(`/api/trips/${tripId}/checklist`);
-    setChecklist(await res.json());
-  };
+  
 
-  const handleSelectTrip = (trip: Trip) => {
+    const handleSelectTrip = (trip: Trip) => {
     setSelectedTrip(trip);
-    fetchActivities(trip.id);
-    fetchExpenses(trip.id);
-    fetchAccommodations(trip.id);
-    fetchChecklist(trip.id);
-    socket.emit('join_trip', trip.id);
     setActiveTab(trip.start_date);
   };
 
@@ -210,11 +243,7 @@ export default function App() {
       end_date: formData.get('end_date') as string,
       country: formData.get('country') as string,
     };
-    await fetch('/api/trips', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newTrip),
-    });
+        await addDoc(collection(db, "trips"), newTrip);
     fetchTrips();
     setIsAddingTrip(false);
   };
@@ -235,11 +264,7 @@ export default function App() {
       is_flight: formData.get('is_flight') === 'on',
       travel_mode: formData.get('travel_mode') as string || 'transit',
     };
-    await fetch('/api/activities', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newActivity),
-    });
+        await addDoc(collection(db, "activities"), newActivity);
     setIsAddingActivity(false);
   };
 
@@ -263,14 +288,9 @@ export default function App() {
     };
 
     try {
-      await fetch('/api/activities', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newActivity),
-      });
+            await addDoc(collection(db, "activities"), newActivity);
       setIsAddingFlight(false);
       setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '' });
-      fetchActivities(selectedTrip.id);
     } catch (err) {
       console.error(err);
     }
@@ -293,14 +313,9 @@ export default function App() {
     };
 
     try {
-      await fetch('/api/accommodations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newAcc),
-      });
+            await addDoc(collection(db, "accommodations"), newAcc);
       setIsAddingAccommodation(false);
       setAccommodationForm({ name: '', address: '', check_in: '', check_out: '' });
-      fetchAccommodations(selectedTrip.id);
     } catch (err) {
       console.error(err);
     }
@@ -319,11 +334,7 @@ export default function App() {
       currency: formData.get('currency') as string,
       date: format(new Date(), 'yyyy-MM-dd'),
     };
-    await fetch('/api/expenses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newExpense),
-    });
+        await addDoc(collection(db, "expenses"), newExpense);
     setIsAddingExpense(false);
   };
 
@@ -404,15 +415,15 @@ export default function App() {
         doc.setFont('NotoSansTC');
       }
 
-      if (sourceHanSerifBold) {
-        doc.addFileToVFS('SourceHanSerif-Bold.ttf', sourceHanSerifBold);
-        doc.addFont('SourceHanSerif-Bold.ttf', 'SourceHanSerif', 'bold');
+      if (notoSerifTCBold) {
+        doc.addFileToVFS('NotoSerifTC-Bold.ttf', notoSerifTCBold);
+        doc.addFont('NotoSerifTC-Bold.ttf', 'NotoSerifTC', 'bold');
       }
 
       const pageWidth = doc.internal.pageSize.getWidth();
       
       // Header
-      doc.setFont('SourceHanSerif', 'bold');
+      doc.setFont('NotoSerifTC', 'bold');
       doc.setFontSize(24);
       doc.setTextColor('#18181b');
       doc.text(selectedTrip.name, 15, 20);
@@ -430,7 +441,7 @@ export default function App() {
       // Flights
       const flights = activities.filter(a => a.is_flight);
       if (flights.length > 0) {
-        doc.setFont('SourceHanSerif', 'bold');
+        doc.setFont('NotoSerifTC', 'bold');
         doc.setFontSize(12);
         doc.setTextColor('#a1a1aa');
         doc.text("航班資訊", 15, currentY);
@@ -451,7 +462,7 @@ export default function App() {
 
       // Accommodations
       if (accommodations.length > 0) {
-        doc.setFont('SourceHanSerif', 'bold');
+        doc.setFont('NotoSerifTC', 'bold');
         doc.setFontSize(12);
         doc.setTextColor('#a1a1aa');
         doc.text("住宿安排", 15, currentY);
@@ -471,7 +482,7 @@ export default function App() {
       }
 
       // Daily Itinerary
-      doc.setFont('SourceHanSerif', 'bold');
+      doc.setFont('NotoSerifTC', 'bold');
       doc.setFontSize(12);
       doc.setTextColor('#a1a1aa');
       doc.text("每日行程", 15, currentY);
@@ -610,8 +621,7 @@ export default function App() {
   const handleDeleteActivity = async (id: string) => {
     if (!confirm('確定要刪除此行程嗎？')) return;
     try {
-      await fetch(`/api/activities/${id}`, { method: 'DELETE' });
-      if (selectedTrip) fetchActivities(selectedTrip.id);
+            await deleteDoc(doc(db, "activities", id));
     } catch (err) {
       console.error(err);
     }
@@ -621,13 +631,10 @@ export default function App() {
     e.preventDefault();
     if (!editingActivity) return;
     try {
-      await fetch(`/api/activities/${editingActivity.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editingActivity)
-      });
+            const activityDoc = doc(db, "activities", editingActivity.id);
+      const { id, ...activityData } = editingActivity; // Firestore update doesn't need the id in the body
+      await updateDoc(activityDoc, activityData);
       setEditingActivity(null);
-      if (selectedTrip) fetchActivities(selectedTrip.id);
     } catch (err) {
       console.error(err);
     }
@@ -637,8 +644,11 @@ export default function App() {
     e.stopPropagation();
     if (!confirm('確定要刪除整趟旅程嗎？此動作無法復原。')) return;
     try {
-      await fetch(`/api/trips/${id}`, { method: 'DELETE' });
+            await deleteDoc(doc(db, "trips", id));
       fetchTrips();
+      if (selectedTrip?.id === id) {
+        setSelectedTrip(null);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -683,28 +693,21 @@ export default function App() {
       e.preventDefault();
       if (!newItem.trim() || !selectedTrip) return;
       
-      await fetch('/api/checklist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          id: crypto.randomUUID(),
-          trip_id: selectedTrip.id,
-          item: newItem.trim()
-        })
+            await addDoc(collection(db, "checklist"), {
+        trip_id: selectedTrip.id,
+        item: newItem.trim(),
+        is_checked: false
       });
       setNewItem('');
     };
 
     const handleToggleCheck = async (id: string, is_checked: boolean) => {
-      await fetch(`/api/checklist/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_checked: !is_checked })
-      });
+            const itemDoc = doc(db, "checklist", id);
+      await updateDoc(itemDoc, { is_checked: !is_checked });
     };
 
     const handleDeleteItem = async (id: string) => {
-      await fetch(`/api/checklist/${id}`, { method: 'DELETE' });
+            await deleteDoc(doc(db, "checklist", id));
     };
 
     return (
@@ -793,7 +796,9 @@ export default function App() {
   function renderTripDetail() {
     if (!selectedTrip) return null;
     const dates = getDateRange();
-    const currentActivities = activities.filter(a => a.date === activeTab);
+    const currentActivities = activities
+      .filter(a => a.date === activeTab)
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
     const currentAccommodations = accommodations.filter(acc => {
       const checkIn = parseISO(acc.check_in);
       const checkOut = parseISO(acc.check_out);
@@ -801,7 +806,10 @@ export default function App() {
       // "From the day after check-in" -> current > checkIn
       return current > checkIn && current <= checkOut;
     });
-    const totalExpense = expenses.reduce((sum, e) => sum + e.amount, 0);
+    const totalExpenseTWD = expenses.reduce((sum, e) => {
+      const rate = EXCHANGE_RATES[e.currency] || 1;
+      return sum + (e.amount * rate);
+    }, 0);
 
     return (
       <div className="flex flex-col h-screen bg-zinc-50">
@@ -830,8 +838,8 @@ export default function App() {
                 onClick={() => setIsExpenseAnalysisOpen(true)}
                 className="bg-zinc-900 text-white px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all text-right"
               >
-                <div className="text-[10px] uppercase font-bold opacity-60">總支出</div>
-                <div className="text-md font-bold">${totalExpense.toLocaleString()}</div>
+                <div className="text-[10px] uppercase font-bold opacity-60">總支出 (TWD)</div>
+                <div className="text-md font-bold">${Math.round(totalExpenseTWD).toLocaleString()}</div>
               </button>
             </div>
           </div>
@@ -916,8 +924,28 @@ export default function App() {
           </div>
 
           <div className="space-y-4">
-            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">準備清單</h3>
-            <Checklist />
+            <div className="flex justify-between items-center">
+              <button 
+                onClick={() => setIsChecklistExpanded(!isChecklistExpanded)}
+                className="flex items-center gap-2 text-sm font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors"
+              >
+                準備清單
+                <MoreHorizontal size={14} className={cn("transition-transform", isChecklistExpanded ? "rotate-90" : "rotate-0")} />
+              </button>
+            </div>
+            
+            <AnimatePresence>
+              {isChecklistExpanded && (
+                <motion.div 
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <Checklist />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Itinerary Section */}
@@ -1571,20 +1599,28 @@ export default function App() {
         )}
 
         {isExpenseAnalysisOpen && selectedTrip && (
-          <Modal title="支出分析" onClose={() => setIsExpenseAnalysisOpen(false)}>
+          <Modal title="支出分析 (TWD)" onClose={() => setIsExpenseAnalysisOpen(false)}>
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-3">
                 {["交通", "住宿", "飲食", "購物", "其他"].map(cat => {
-                  const catTotal = expenses.filter(e => e.category === cat).reduce((sum, e) => sum + e.amount, 0);
-                  const total = expenses.reduce((sum, e) => sum + e.amount, 0);
-                  const percent = total > 0 ? Math.round((catTotal / total) * 100) : 0;
+                  const catTotalTWD = expenses
+                    .filter(e => e.category === cat)
+                    .reduce((sum, e) => {
+                      const rate = EXCHANGE_RATES[e.currency] || 1;
+                      return sum + (e.amount * rate);
+                    }, 0);
+                  const totalTWD = expenses.reduce((sum, e) => {
+                    const rate = EXCHANGE_RATES[e.currency] || 1;
+                    return sum + (e.amount * rate);
+                  }, 0);
+                  const percent = totalTWD > 0 ? Math.round((catTotalTWD / totalTWD) * 100) : 0;
                   
                   return (
                     <div key={cat} className="bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
                       <div className="flex items-center gap-2 text-zinc-400 mb-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider">{cat}</span>
                       </div>
-                      <div className="text-lg font-bold text-zinc-900">${catTotal.toLocaleString()}</div>
+                      <div className="text-lg font-bold text-zinc-900">${Math.round(catTotalTWD).toLocaleString()}</div>
                       <div className="w-full bg-zinc-200 h-1 rounded-full mt-2 overflow-hidden">
                         <div className="bg-zinc-900 h-full" style={{ width: `${percent}%` }} />
                       </div>
@@ -1595,28 +1631,39 @@ export default function App() {
               </div>
 
               <div className="space-y-3">
-                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">大額支出</h4>
+                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">大額支出 (換算台幣)</h4>
                 <div className="space-y-2">
-                  {[...expenses].sort((a, b) => b.amount - a.amount).slice(0, 5).map((e, idx) => (
-                    <div key={e.id} className="flex items-center justify-between p-3 bg-white border border-zinc-100 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <div className="w-6 h-6 bg-zinc-100 text-zinc-500 rounded flex items-center justify-center font-bold text-[10px]">
-                          {idx + 1}
+                  {[...expenses].sort((a, b) => {
+                    const rateA = EXCHANGE_RATES[a.currency] || 1;
+                    const rateB = EXCHANGE_RATES[b.currency] || 1;
+                    return (b.amount * rateB) - (a.amount * rateA);
+                  }).slice(0, 5).map((e, idx) => {
+                    const rate = EXCHANGE_RATES[e.currency] || 1;
+                    const amountTWD = e.amount * rate;
+                    return (
+                      <div key={e.id} className="flex items-center justify-between p-3 bg-white border border-zinc-100 rounded-xl">
+                        <div className="flex items-center gap-3">
+                          <div className="w-6 h-6 bg-zinc-100 text-zinc-500 rounded flex items-center justify-center font-bold text-[10px]">
+                            {idx + 1}
+                          </div>
+                          <div>
+                            <div className="text-xs font-bold text-zinc-800">{e.description}</div>
+                            <div className="text-[9px] text-zinc-400">{e.date} · {e.category} ({e.amount} {e.currency})</div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="text-xs font-bold text-zinc-800">{e.description}</div>
-                          <div className="text-[9px] text-zinc-400">{e.date} · {e.category}</div>
-                        </div>
+                        <div className="text-xs font-bold text-zinc-900">${Math.round(amountTWD).toLocaleString()}</div>
                       </div>
-                      <div className="text-xs font-bold text-zinc-900">${e.amount.toLocaleString()}</div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
               <div className="bg-zinc-900 text-white p-5 rounded-2xl shadow-lg">
-                <div className="text-[10px] font-bold uppercase opacity-60 mb-1">總計支出</div>
-                <div className="text-2xl font-bold">${expenses.reduce((sum, e) => sum + e.amount, 0).toLocaleString()}</div>
+                <div className="text-[10px] font-bold uppercase opacity-60 mb-1">總計支出 (TWD)</div>
+                <div className="text-2xl font-bold">${Math.round(expenses.reduce((sum, e) => {
+                  const rate = EXCHANGE_RATES[e.currency] || 1;
+                  return sum + (e.amount * rate);
+                }, 0)).toLocaleString()}</div>
               </div>
             </div>
           </Modal>
