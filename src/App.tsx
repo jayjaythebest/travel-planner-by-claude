@@ -107,6 +107,28 @@ export default function App() {
     category: '飲食',
     date: format(new Date(), 'yyyy-MM-dd')
   });
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  const openEditExpense = (expense: Expense) => {
+    setEditingExpense(expense);
+    setExpenseForm({
+      description: expense.description,
+      amount: expense.amount.toString(),
+      currency: expense.currency,
+      category: expense.category,
+      date: expense.date,
+    });
+    setIsAddingExpense(true);
+  };
+
+  const handleDeleteExpense = async (id: string) => {
+    if (!confirm('確定要刪除此支出嗎？')) return;
+    try {
+      await deleteDoc(doc(db, 'expenses', id));
+    } catch (err) {
+      console.error(err);
+    }
+  };
   const [loading, setLoading] = useState(false);
   const [aiAdvice, setAiAdvice] = useState<Record<string, string>>({});
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -591,17 +613,21 @@ export default function App() {
     e.preventDefault();
     if (!selectedTrip) return;
     const formData = new FormData(e.currentTarget);
-    const newExpense = {
-      id: crypto.randomUUID(),
-      trip_id: selectedTrip.id,
+    const fields = {
       description: formData.get('description') as string,
       category: formData.get('category') as string,
       amount: parseFloat(formData.get('amount') as string),
       currency: formData.get('currency') as string,
-      date: format(new Date(), 'yyyy-MM-dd'),
+      date: expenseForm.date,
     };
-        await addDoc(collection(db, "expenses"), newExpense);
+    if (editingExpense) {
+      await updateDoc(doc(db, 'expenses', editingExpense.id), fields);
+      setEditingExpense(null);
+    } else {
+      await addDoc(collection(db, 'expenses'), { id: crypto.randomUUID(), trip_id: selectedTrip.id, ...fields });
+    }
     setIsAddingExpense(false);
+    setExpenseForm({ description: '', amount: '', currency: 'USD', category: '飲食', date: format(new Date(), 'yyyy-MM-dd') });
   };
 
   const getAdvice = async (activity: string) => {
@@ -2146,19 +2172,22 @@ export default function App() {
         )}
 
         {isAddingExpense && (
-          <Modal title="新增花費" onClose={() => {
+          <Modal title={editingExpense ? '編輯支出' : '新增花費'} onClose={() => {
             setIsAddingExpense(false);
+            setEditingExpense(null);
             setExpenseForm({ description: '', amount: '', currency: 'USD', category: '飲食', date: format(new Date(), 'yyyy-MM-dd') });
           }}>
-            <div className="mb-6">
-              <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50 cursor-pointer hover:bg-zinc-100 transition-colors">
-                <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                  <Camera className="w-8 h-8 mb-2 text-zinc-400" />
-                  <p className="text-sm font-bold text-zinc-500">拍照辨識收據 (AI)</p>
-                </div>
-                <input type="file" className="hidden" accept="image/*" onChange={handleScanReceipt} />
-              </label>
-            </div>
+            {!editingExpense && (
+              <div className="mb-6">
+                <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50 cursor-pointer hover:bg-zinc-100 transition-colors">
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <Camera className="w-8 h-8 mb-2 text-zinc-400" />
+                    <p className="text-sm font-bold text-zinc-500">拍照辨識收據 (AI)</p>
+                  </div>
+                  <input type="file" className="hidden" accept="image/*" onChange={handleScanReceipt} />
+                </label>
+              </div>
+            )}
             <form onSubmit={handleAddExpense} className="space-y-4">
               <div>
                 <label className="block text-sm font-bold text-zinc-600 mb-1">款項敘述</label>
@@ -2222,7 +2251,7 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">確認記帳</button>
+              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{editingExpense ? '儲存變更' : '確認記帳'}</button>
             </form>
           </Modal>
         )}
@@ -2370,27 +2399,34 @@ export default function App() {
               </div>
 
               <div className="space-y-3">
-                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">大額支出 (換算台幣)</h4>
-                <div className="space-y-2">
-                  {[...expenses].sort((a, b) => {
-                    const rateA = EXCHANGE_RATES[a.currency] || 1;
-                    const rateB = EXCHANGE_RATES[b.currency] || 1;
-                    return (b.amount * rateB) - (a.amount * rateA);
-                  }).slice(0, 5).map((e, idx) => {
+                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">所有支出明細</h4>
+                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                  {[...expenses].sort((a, b) => b.date.localeCompare(a.date)).map((e) => {
                     const rate = EXCHANGE_RATES[e.currency] || 1;
                     const amountTWD = e.amount * rate;
                     return (
-                      <div key={e.id} className="flex items-center justify-between p-3 bg-white border border-zinc-100 rounded-xl">
-                        <div className="flex items-center gap-3">
-                          <div className="w-6 h-6 bg-zinc-100 text-zinc-500 rounded flex items-center justify-center font-bold text-[10px]">
-                            {idx + 1}
-                          </div>
+                      <div key={e.id} className="flex items-center justify-between p-3 bg-white border border-zinc-100 rounded-xl group">
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
                           <div>
-                            <div className="text-xs font-bold text-zinc-800">{e.description}</div>
-                            <div className="text-[9px] text-zinc-400">{e.date} · {e.category} ({e.amount} {e.currency})</div>
+                            <div className="text-xs font-bold text-zinc-800 truncate">{e.description}</div>
+                            <div className="text-[9px] text-zinc-400">{e.date} · {e.category} · {e.amount} {e.currency}</div>
                           </div>
                         </div>
-                        <div className="text-xs font-bold text-zinc-900">${Math.round(amountTWD).toLocaleString()}</div>
+                        <div className="flex items-center gap-2 ml-2 shrink-0">
+                          <div className="text-xs font-bold text-zinc-900">${Math.round(amountTWD).toLocaleString()}</div>
+                          <button
+                            onClick={() => { setIsExpenseAnalysisOpen(false); openEditExpense(e); }}
+                            className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteExpense(e.id)}
+                            className="p-1.5 rounded-lg text-zinc-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
