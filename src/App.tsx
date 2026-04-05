@@ -226,7 +226,7 @@ export default function App() {
       await updateDoc(doc(db, "trips", tripToManage.documentId || tripToManage.id), {
         shared_with: sharedWith
       });
-      fetchTrips();
+      // trips are kept in sync via onSnapshot listener — no manual fetch needed
       setIsManagingBuddies(false);
       setTripToManage(null);
     } catch (err) {

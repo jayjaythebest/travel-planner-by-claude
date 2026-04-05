@@ -1,11 +1,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
 
 export const geminiService = {
   async getItineraryAdvice(spotName: string, country: string) {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash-preview-04-17",
       contents: `我正在規劃去 ${country} 旅遊，景點是 ${spotName}。請提供 50 字以內的簡短介紹與建議，像是一定要點那些餐點、看那些東西等等。`,
     });
     return response.text;
@@ -18,7 +18,7 @@ export const geminiService = {
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash-preview-04-17",
       contents: { parts },
       config: {
         responseMimeType: "application/json",
@@ -46,7 +46,7 @@ export const geminiService = {
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash-preview-04-17",
       contents: { parts },
       config: {
         responseMimeType: "application/json",
@@ -67,7 +67,7 @@ export const geminiService = {
 
   async analyzeReceipt(base64Image: string, mimeType: string) {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash-preview-04-17",
       contents: {
         parts: [
           { inlineData: { data: base64Image, mimeType } },
@@ -98,7 +98,7 @@ export const geminiService = {
     }
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash-preview-04-17",
       contents: { parts },
       config: {
         responseMimeType: "application/json",
@@ -121,7 +121,7 @@ export const geminiService = {
 
   async translateItinerary(data: any) {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash-preview-04-17",
       contents: `You are a professional translator. Please translate the following travel itinerary data from Chinese to English. 
       The output must be a valid JSON object with the exact same structure as the input. 
       Translate all descriptive text (names, notes, activities, addresses, etc.) to English. 
@@ -138,7 +138,7 @@ export const geminiService = {
 
   async getItinerarySuggestion(trip: any, activities: any[], question: string) {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash-preview-04-17",
       contents: `你是一個專業的旅遊規劃師。使用者正在規劃一個去 ${trip.country} 的旅程 (${trip.start_date} 到 ${trip.end_date})。
       
       目前的行程安排如下：
