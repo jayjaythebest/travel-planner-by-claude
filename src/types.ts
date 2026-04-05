@@ -28,6 +28,7 @@ export interface Activity {
   is_flight: boolean;
   travel_mode: 'walking' | 'transit' | 'driving';
   ai_advice?: string;
+  travel_time_to_next?: string;
 }
 
 export interface Accommodation {

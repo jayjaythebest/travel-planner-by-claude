@@ -128,7 +128,6 @@ export default function App() {
   const [isAiChatLoading, setIsAiChatLoading] = useState(false);
   const [activityStartTime, setActivityStartTime] = useState('09:00');
   const [activityEndTime, setActivityEndTime] = useState('11:00');
-  const [travelTimes, setTravelTimes] = useState<Record<string, string>>({});
 
   const generateTimeSlots = () => {
     const slots = [];
@@ -293,6 +292,20 @@ export default function App() {
   //   }
   // }, [activities, selectedTrip]);
 
+  // Calculate travel time between two consecutive activities and persist to Firestore
+  const calcAndSaveTravelTime = async (current: Activity, next: Activity, country: string) => {
+    if (current.travel_time_to_next) return; // Already stored, skip
+    try {
+      const time = await geminiService.getTravelTime(current.activity, next.activity, country, next.travel_mode);
+      if (time) {
+        await updateDoc(doc(db, 'activities', current.id), { travel_time_to_next: time });
+      }
+    } catch (err) {
+      console.error('Travel time error:', err);
+    }
+  };
+
+  // Only trigger calculation for pairs that are missing stored travel time
   useEffect(() => {
     if (!selectedTrip || activities.length === 0 || !activeTab) return;
     const dayActivities = activities
@@ -301,14 +314,9 @@ export default function App() {
     if (dayActivities.length < 2) return;
     dayActivities.forEach((activity, idx) => {
       if (idx === dayActivities.length - 1) return;
-      const next = dayActivities[idx + 1];
-      const key = `${activity.id}-${next.id}`;
-      if (travelTimes[key]) return;
-      geminiService.getTravelTime(activity.activity, next.activity, selectedTrip.country, next.travel_mode)
-        .then(time => {
-          if (time) setTravelTimes(prev => ({ ...prev, [key]: time }));
-        })
-        .catch(err => console.error('Travel time error:', err));
+      if (!activity.travel_time_to_next) {
+        calcAndSaveTravelTime(activity, dayActivities[idx + 1], selectedTrip.country);
+      }
     });
   }, [activities, activeTab, selectedTrip]);
 
@@ -1477,15 +1485,13 @@ export default function App() {
 
                   {idx < currentActivities.length - 1 && (() => {
                     const next = currentActivities[idx + 1];
-                    const key = `${activity.id}-${next.id}`;
                     const modeIcon = next.travel_mode === 'walking' ? '🚶' : next.travel_mode === 'driving' ? '🚕' : '🚇';
-                    const timeText = travelTimes[key];
                     return (
                       <div className="py-1 flex flex-col items-center gap-1">
                         <div className="w-px h-3 bg-zinc-200" />
                         <div className="flex items-center gap-1.5 text-xs text-zinc-400 bg-zinc-50 px-3 py-1 rounded-full border border-zinc-100">
                           <span>{modeIcon}</span>
-                          <span>{timeText ?? <span className="animate-pulse">計算中...</span>}</span>
+                          <span>{activity.travel_time_to_next ?? <span className="animate-pulse">計算中...</span>}</span>
                         </div>
                         <div className="w-px h-3 bg-zinc-200" />
                       </div>
