@@ -126,6 +126,32 @@ export default function App() {
   const [aiChatInput, setAiChatInput] = useState('');
   const [aiChatMessages, setAiChatMessages] = useState<{role: 'user' | 'ai', content: string}[]>([]);
   const [isAiChatLoading, setIsAiChatLoading] = useState(false);
+  const [activityStartTime, setActivityStartTime] = useState('09:00');
+  const [activityEndTime, setActivityEndTime] = useState('11:00');
+  const [travelTimes, setTravelTimes] = useState<Record<string, string>>({});
+
+  const generateTimeSlots = () => {
+    const slots = [];
+    for (let h = 0; h < 24; h++) {
+      for (let m = 0; m < 60; m += 30) {
+        slots.push(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
+      }
+    }
+    return slots;
+  };
+
+  const addTwoHours = (time: string) => {
+    const [h, m] = time.split(':').map(Number);
+    const totalMins = h * 60 + m + 120;
+    const endH = Math.floor(totalMins / 60) % 24;
+    const endM = totalMins % 60;
+    return `${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}`;
+  };
+
+  const handleStartTimeChange = (time: string) => {
+    setActivityStartTime(time);
+    setActivityEndTime(addTwoHours(time));
+  };
 
   useEffect(() => {
     const savedUser = localStorage.getItem('travel_planner_user');
@@ -266,6 +292,25 @@ export default function App() {
   //     fetchMissingAdvice();
   //   }
   // }, [activities, selectedTrip]);
+
+  useEffect(() => {
+    if (!selectedTrip || activities.length === 0 || !activeTab) return;
+    const dayActivities = activities
+      .filter(a => a.date === activeTab)
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
+    if (dayActivities.length < 2) return;
+    dayActivities.forEach((activity, idx) => {
+      if (idx === dayActivities.length - 1) return;
+      const next = dayActivities[idx + 1];
+      const key = `${activity.id}-${next.id}`;
+      if (travelTimes[key]) return;
+      geminiService.getTravelTime(activity.activity, next.activity, selectedTrip.country, next.travel_mode)
+        .then(time => {
+          if (time) setTravelTimes(prev => ({ ...prev, [key]: time }));
+        })
+        .catch(err => console.error('Travel time error:', err));
+    });
+  }, [activities, activeTab, selectedTrip]);
 
   const calculateAllTravelTimes = async () => {
     const times: Record<string, string> = {};
@@ -624,8 +669,8 @@ export default function App() {
         if (form) {
           if (res.activity) (form.elements.namedItem('activity') as HTMLInputElement).value = res.activity;
           if (res.date) (form.elements.namedItem('date') as HTMLSelectElement).value = res.date;
-          if (res.start_time) (form.elements.namedItem('start_time') as HTMLInputElement).value = res.start_time;
-          if (res.end_time) (form.elements.namedItem('end_time') as HTMLInputElement).value = res.end_time;
+          if (res.start_time) { setActivityStartTime(res.start_time); setActivityEndTime(addTwoHours(res.start_time)); }
+          if (res.end_time) setActivityEndTime(res.end_time);
           if (res.note) (form.elements.namedItem('note') as HTMLTextAreaElement).value = res.note;
           if (res.map_url) (form.elements.namedItem('map_url') as HTMLInputElement).value = res.map_url;
         }
@@ -649,8 +694,8 @@ export default function App() {
       if (form) {
         if (res.activity) (form.elements.namedItem('activity') as HTMLInputElement).value = res.activity;
         if (res.date) (form.elements.namedItem('date') as HTMLSelectElement).value = res.date;
-        if (res.start_time) (form.elements.namedItem('start_time') as HTMLInputElement).value = res.start_time;
-        if (res.end_time) (form.elements.namedItem('end_time') as HTMLInputElement).value = res.end_time;
+        if (res.start_time) { setActivityStartTime(res.start_time); setActivityEndTime(addTwoHours(res.start_time)); }
+        if (res.end_time) setActivityEndTime(res.end_time);
         if (res.note) (form.elements.namedItem('note') as HTMLTextAreaElement).value = res.note;
         if (res.map_url) (form.elements.namedItem('map_url') as HTMLInputElement).value = res.map_url;
       }
@@ -1430,12 +1475,22 @@ export default function App() {
                     )}
                   </motion.div>
 
-                  {/* Travel Time Indicator Removed */}
-                  {idx < currentActivities.length - 1 && (
-                    <div className="py-2 flex flex-col items-center">
-                      <div className="w-px h-6 bg-zinc-200" />
-                    </div>
-                  )}
+                  {idx < currentActivities.length - 1 && (() => {
+                    const next = currentActivities[idx + 1];
+                    const key = `${activity.id}-${next.id}`;
+                    const modeIcon = next.travel_mode === 'walking' ? '🚶' : next.travel_mode === 'driving' ? '🚕' : '🚇';
+                    const timeText = travelTimes[key];
+                    return (
+                      <div className="py-1 flex flex-col items-center gap-1">
+                        <div className="w-px h-3 bg-zinc-200" />
+                        <div className="flex items-center gap-1.5 text-xs text-zinc-400 bg-zinc-50 px-3 py-1 rounded-full border border-zinc-100">
+                          <span>{modeIcon}</span>
+                          <span>{timeText ?? <span className="animate-pulse">計算中...</span>}</span>
+                        </div>
+                        <div className="w-px h-3 bg-zinc-200" />
+                      </div>
+                    );
+                  })()}
                 </div>
               ))
             )}
@@ -1793,11 +1848,27 @@ export default function App() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-zinc-700 mb-1">開始時間</label>
-                  <input name="start_time" type="time" required className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" />
+                  <select
+                    name="start_time"
+                    required
+                    value={activityStartTime}
+                    onChange={e => handleStartTimeChange(e.target.value)}
+                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
+                  >
+                    {generateTimeSlots().map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">結束時間</label>
-                  <input name="end_time" type="time" required className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" />
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">結束時間 (預設+2小時)</label>
+                  <select
+                    name="end_time"
+                    required
+                    value={activityEndTime}
+                    onChange={e => setActivityEndTime(e.target.value)}
+                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
+                  >
+                    {generateTimeSlots().map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
                 </div>
               </div>
               <div>

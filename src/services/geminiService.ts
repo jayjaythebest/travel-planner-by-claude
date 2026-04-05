@@ -136,6 +136,17 @@ export const geminiService = {
     return JSON.parse(response.text || "{}");
   },
 
+  async getTravelTime(origin: string, destination: string, country: string, mode: string) {
+    const modeText = mode === 'transit' ? '地鐵/大眾運輸' : mode === 'walking' ? '步行' : '計程車/開車';
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-04-17",
+      contents: `請估算在${country}，從「${origin}」到「${destination}」，以${modeText}方式的交通時間和距離。
+      請以繁體中文簡短回答，只回傳以下格式的文字，不需要其他說明：「約X分鐘 (X.Xkm)」
+      如果步行距離少於1公里則建議步行。`,
+    });
+    return response.text?.trim() || '';
+  },
+
   async getItinerarySuggestion(trip: any, activities: any[], question: string) {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-preview-04-17",
