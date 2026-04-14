@@ -60,6 +60,286 @@ const EXCHANGE_RATES: Record<string, number> = {
   'THB': 0.9,
 };
 
+// ── Country-themed card helpers ──────────────────────────────────────────
+type CountryTheme = {
+  gradient: string;
+  borderColor: string;
+  flagEmoji: string;
+  landmark: React.ReactNode;
+};
+
+function getCountryTheme(country: string): CountryTheme {
+  const c = (country || '').toLowerCase();
+
+  if (c.includes('japan') || c.includes('日本')) return {
+    gradient: 'linear-gradient(130deg, #fff0f0 0%, #ffffff 60%)',
+    borderColor: '#fecaca',
+    flagEmoji: '🇯🇵',
+    landmark: (
+      <svg width="130" height="100" viewBox="0 0 130 100" fill="none">
+        <path d="M5 88 L65 12 L125 88 Z" fill="#dc2626" fillOpacity="0.12"/>
+        <path d="M50 30 Q65 12 80 30 L74 38 Q65 26 56 38 Z" fill="white" fillOpacity="0.5"/>
+        <ellipse cx="65" cy="89" rx="55" ry="4" fill="#dc2626" fillOpacity="0.05"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('thailand') || c.includes('泰國') || c.includes('泰国')) return {
+    gradient: 'linear-gradient(130deg, #fffbeb 0%, #eff6ff 60%)',
+    borderColor: '#fde68a',
+    flagEmoji: '🇹🇭',
+    landmark: (
+      <svg width="100" height="120" viewBox="0 0 100 120" fill="none">
+        <path d="M50 5 L58 35 L55 35 L60 55 L56 55 L62 75 L38 75 L44 55 L40 55 L45 35 L42 35 Z" fill="#d97706" fillOpacity="0.14"/>
+        <path d="M22 42 L27 60 L25 60 L30 75 L14 75 L19 60 L17 60 Z" fill="#1d4ed8" fillOpacity="0.11"/>
+        <path d="M78 42 L83 60 L81 60 L86 75 L70 75 L75 60 L73 60 Z" fill="#1d4ed8" fillOpacity="0.11"/>
+        <rect x="30" y="75" width="40" height="15" fill="#d97706" fillOpacity="0.09" rx="2"/>
+        <rect x="10" y="88" width="80" height="10" fill="#d97706" fillOpacity="0.07" rx="2"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('france') || c.includes('法國') || c.includes('法国') || c.includes('paris')) return {
+    gradient: 'linear-gradient(130deg, #eff6ff 0%, #ffffff 60%)',
+    borderColor: '#bfdbfe',
+    flagEmoji: '🇫🇷',
+    landmark: (
+      <svg width="80" height="130" viewBox="0 0 80 130" fill="none">
+        <path d="M15 115 L35 55 L45 55 L65 115 Z" fill="#1e40af" fillOpacity="0.11"/>
+        <path d="M27 55 L33 25 L47 25 L53 55 Z" fill="#1e40af" fillOpacity="0.11"/>
+        <path d="M33 25 L38 8 L42 8 L47 25 Z" fill="#1e40af" fillOpacity="0.11"/>
+        <line x1="40" y1="8" x2="40" y2="2" stroke="#1e40af" strokeWidth="2" strokeOpacity="0.15"/>
+        <rect x="20" y="53" width="40" height="3" fill="#1e40af" fillOpacity="0.08" rx="1"/>
+        <rect x="29" y="23" width="22" height="3" fill="#1e40af" fillOpacity="0.08" rx="1"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('korea') || c.includes('韓國') || c.includes('韩国')) return {
+    gradient: 'linear-gradient(130deg, #fff0f0 0%, #eff6ff 60%)',
+    borderColor: '#fecaca',
+    flagEmoji: '🇰🇷',
+    landmark: (
+      <svg width="130" height="90" viewBox="0 0 130 90" fill="none">
+        <path d="M5 52 Q65 18 125 52 L120 62 Q65 28 10 62 Z" fill="#dc2626" fillOpacity="0.13"/>
+        <rect x="25" y="62" width="80" height="20" fill="#1d4ed8" fillOpacity="0.08" rx="1"/>
+        <rect x="34" y="62" width="4" height="20" fill="#1d4ed8" fillOpacity="0.12"/>
+        <rect x="49" y="62" width="4" height="20" fill="#1d4ed8" fillOpacity="0.12"/>
+        <rect x="64" y="62" width="4" height="20" fill="#1d4ed8" fillOpacity="0.12"/>
+        <rect x="79" y="62" width="4" height="20" fill="#1d4ed8" fillOpacity="0.12"/>
+        <rect x="94" y="62" width="4" height="20" fill="#1d4ed8" fillOpacity="0.12"/>
+        <path d="M52 82 Q65 70 78 82" fill="none" stroke="#1d4ed8" strokeOpacity="0.15" strokeWidth="2"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('italy') || c.includes('義大利') || c.includes('意大利') || c.includes('roma') || c.includes('rome')) return {
+    gradient: 'linear-gradient(130deg, #fffbeb 0%, #ffffff 60%)',
+    borderColor: '#fde68a',
+    flagEmoji: '🇮🇹',
+    landmark: (
+      <svg width="130" height="90" viewBox="0 0 130 90" fill="none">
+        <ellipse cx="65" cy="55" rx="58" ry="30" fill="none" stroke="#f59e0b" strokeOpacity="0.18" strokeWidth="3"/>
+        <ellipse cx="65" cy="55" rx="44" ry="22" fill="none" stroke="#f59e0b" strokeOpacity="0.13" strokeWidth="2"/>
+        <path d="M18 38 Q22 28 26 38" fill="none" stroke="#f59e0b" strokeOpacity="0.14" strokeWidth="1.5"/>
+        <path d="M34 33 Q38 23 42 33" fill="none" stroke="#f59e0b" strokeOpacity="0.14" strokeWidth="1.5"/>
+        <path d="M50 30 Q54 20 58 30" fill="none" stroke="#f59e0b" strokeOpacity="0.14" strokeWidth="1.5"/>
+        <path d="M66 30 Q70 20 74 30" fill="none" stroke="#f59e0b" strokeOpacity="0.14" strokeWidth="1.5"/>
+        <path d="M82 33 Q86 23 90 33" fill="none" stroke="#f59e0b" strokeOpacity="0.14" strokeWidth="1.5"/>
+        <path d="M98 38 Q102 28 106 38" fill="none" stroke="#f59e0b" strokeOpacity="0.14" strokeWidth="1.5"/>
+        <ellipse cx="65" cy="84" rx="56" ry="4" fill="#f59e0b" fillOpacity="0.05"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('uk') || c.includes('england') || c.includes('英國') || c.includes('英国') || c.includes('london') || c.includes('britain')) return {
+    gradient: 'linear-gradient(130deg, #eff6ff 0%, #fff0f0 60%)',
+    borderColor: '#bfdbfe',
+    flagEmoji: '🇬🇧',
+    landmark: (
+      <svg width="70" height="130" viewBox="0 0 70 130" fill="none">
+        <rect x="22" y="30" width="26" height="80" fill="#1e3a8a" fillOpacity="0.11" rx="2"/>
+        <circle cx="35" cy="50" r="10" fill="none" stroke="#1e3a8a" strokeOpacity="0.14" strokeWidth="2"/>
+        <path d="M18 30 L35 8 L52 30 Z" fill="#1e3a8a" fillOpacity="0.11"/>
+        <line x1="35" y1="8" x2="35" y2="2" stroke="#1e3a8a" strokeWidth="2" strokeOpacity="0.18"/>
+        <rect x="30" y="70" width="10" height="15" fill="#1e3a8a" fillOpacity="0.08" rx="1"/>
+        <rect x="15" y="110" width="40" height="10" fill="#1e3a8a" fillOpacity="0.07" rx="2"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('australia') || c.includes('澳大利亞') || c.includes('澳洲') || c.includes('sydney')) return {
+    gradient: 'linear-gradient(130deg, #f0f9ff 0%, #ffffff 60%)',
+    borderColor: '#bae6fd',
+    flagEmoji: '🇦🇺',
+    landmark: (
+      <svg width="130" height="80" viewBox="0 0 130 80" fill="none">
+        <path d="M20 65 Q35 20 65 65 Z" fill="#0284c7" fillOpacity="0.12"/>
+        <path d="M50 65 Q70 28 90 65 Z" fill="#0284c7" fillOpacity="0.12"/>
+        <path d="M75 65 Q85 44 100 65 Z" fill="#0284c7" fillOpacity="0.10"/>
+        <rect x="10" y="63" width="110" height="5" fill="#0284c7" fillOpacity="0.09" rx="3"/>
+        <rect x="5" y="67" width="120" height="4" fill="#0284c7" fillOpacity="0.06" rx="2"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('singapore') || c.includes('新加坡')) return {
+    gradient: 'linear-gradient(130deg, #fff0f0 0%, #ffffff 60%)',
+    borderColor: '#fecaca',
+    flagEmoji: '🇸🇬',
+    landmark: (
+      <svg width="110" height="110" viewBox="0 0 110 110" fill="none">
+        <rect x="10" y="30" width="22" height="65" fill="#dc2626" fillOpacity="0.11" rx="2"/>
+        <rect x="44" y="25" width="22" height="70" fill="#dc2626" fillOpacity="0.11" rx="2"/>
+        <rect x="78" y="30" width="22" height="65" fill="#dc2626" fillOpacity="0.11" rx="2"/>
+        <path d="M5 28 Q55 14 105 28 L105 35 Q55 21 5 35 Z" fill="#dc2626" fillOpacity="0.14"/>
+        <path d="M8 18 Q55 6 102 18 L102 22 Q55 10 8 22 Z" fill="#38bdf8" fillOpacity="0.14"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('usa') || c.includes('america') || c.includes('美國') || c.includes('美国')) return {
+    gradient: 'linear-gradient(130deg, #eff6ff 0%, #fff0f0 60%)',
+    borderColor: '#bfdbfe',
+    flagEmoji: '🇺🇸',
+    landmark: (
+      <svg width="90" height="120" viewBox="0 0 90 120" fill="none">
+        <ellipse cx="45" cy="108" rx="20" ry="8" fill="#1e40af" fillOpacity="0.08"/>
+        <rect x="38" y="60" width="14" height="48" fill="#1e40af" fillOpacity="0.10" rx="2"/>
+        <path d="M30 60 Q45 30 60 60 L55 62 Q45 38 35 62 Z" fill="#1e40af" fillOpacity="0.10"/>
+        <rect x="34" y="56" width="22" height="6" fill="#1e40af" fillOpacity="0.10" rx="1"/>
+        <path d="M40 30 L45 15 L50 30 L47 28 L43 28 Z" fill="#f59e0b" fillOpacity="0.20"/>
+        <path d="M35 22 L29 12" stroke="#f59e0b" strokeOpacity="0.18" strokeWidth="1.5"/>
+        <path d="M55 22 L61 12" stroke="#f59e0b" strokeOpacity="0.18" strokeWidth="1.5"/>
+        <path d="M45 15 L45 5" stroke="#f59e0b" strokeOpacity="0.18" strokeWidth="1.5"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('taiwan') || c.includes('台灣') || c.includes('台湾')) return {
+    gradient: 'linear-gradient(130deg, #eff6ff 0%, #ffffff 60%)',
+    borderColor: '#bfdbfe',
+    flagEmoji: '🇹🇼',
+    landmark: (
+      <svg width="80" height="130" viewBox="0 0 80 130" fill="none">
+        <rect x="30" y="90" width="20" height="15" fill="#1d4ed8" fillOpacity="0.11" rx="1"/>
+        <rect x="28" y="78" width="24" height="14" fill="#1d4ed8" fillOpacity="0.11" rx="1"/>
+        <rect x="26" y="66" width="28" height="14" fill="#1d4ed8" fillOpacity="0.11" rx="1"/>
+        <rect x="28" y="54" width="24" height="14" fill="#1d4ed8" fillOpacity="0.11" rx="1"/>
+        <rect x="30" y="42" width="20" height="14" fill="#1d4ed8" fillOpacity="0.11" rx="1"/>
+        <rect x="32" y="30" width="16" height="14" fill="#1d4ed8" fillOpacity="0.11" rx="1"/>
+        <rect x="34" y="20" width="12" height="12" fill="#1d4ed8" fillOpacity="0.11" rx="1"/>
+        <line x1="40" y1="20" x2="40" y2="4" stroke="#1d4ed8" strokeWidth="2.5" strokeOpacity="0.17"/>
+        <rect x="20" y="105" width="40" height="8" fill="#1d4ed8" fillOpacity="0.07" rx="2"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('hong kong') || c.includes('香港')) return {
+    gradient: 'linear-gradient(130deg, #fff0f0 0%, #fffbeb 60%)',
+    borderColor: '#fecaca',
+    flagEmoji: '🇭🇰',
+    landmark: (
+      <svg width="130" height="100" viewBox="0 0 130 100" fill="none">
+        <rect x="10" y="40" width="14" height="55" fill="#dc2626" fillOpacity="0.10" rx="1"/>
+        <rect x="28" y="25" width="14" height="70" fill="#dc2626" fillOpacity="0.10" rx="1"/>
+        <rect x="46" y="30" width="12" height="65" fill="#dc2626" fillOpacity="0.10" rx="1"/>
+        <rect x="62" y="20" width="16" height="75" fill="#dc2626" fillOpacity="0.12" rx="1"/>
+        <rect x="82" y="35" width="14" height="60" fill="#dc2626" fillOpacity="0.10" rx="1"/>
+        <rect x="100" y="28" width="12" height="67" fill="#dc2626" fillOpacity="0.10" rx="1"/>
+        <line x1="70" y1="20" x2="70" y2="5" stroke="#dc2626" strokeWidth="2" strokeOpacity="0.15"/>
+        <path d="M0 94 Q65 88 130 94 L130 100 L0 100 Z" fill="#38bdf8" fillOpacity="0.10"/>
+      </svg>
+    )
+  };
+
+  // Default
+  return {
+    gradient: 'linear-gradient(130deg, #fafafa 0%, #ffffff 60%)',
+    borderColor: '#e4e4e7',
+    flagEmoji: '✈️',
+    landmark: (
+      <svg width="120" height="80" viewBox="0 0 120 80" fill="none">
+        <path d="M20 45 L65 28 L100 40 L65 37 Z" fill="#71717a" fillOpacity="0.10"/>
+        <path d="M45 28 L55 14 L65 28 Z" fill="#71717a" fillOpacity="0.10"/>
+        <path d="M55 37 L58 48 L65 37 Z" fill="#71717a" fillOpacity="0.10"/>
+        <ellipse cx="88" cy="20" rx="18" ry="9" fill="#71717a" fillOpacity="0.06"/>
+        <ellipse cx="76" cy="22" rx="12" ry="7" fill="#71717a" fillOpacity="0.06"/>
+        <ellipse cx="24" cy="25" rx="14" ry="8" fill="#71717a" fillOpacity="0.06"/>
+      </svg>
+    )
+  };
+}
+
+// ── Flight card helpers ───────────────────────────────────────────────────
+const AIRPORT_MAP: [string[], string][] = [
+  [['TAOYUAN', 'TAIPEI', 'TPE'], 'TPE'],
+  [['NARITA', 'NRT'], 'NRT'],
+  [['HANEDA', 'HND'], 'HND'],
+  [['KANSAI', 'KIX'], 'KIX'],
+  [['ITAMI', 'ITM'], 'ITM'],
+  [['CHITOSE', 'CTS', 'SAPPORO'], 'CTS'],
+  [['FUKUOKA', 'FUK'], 'FUK'],
+  [['NAHA', 'OKA', 'OKINAWA'], 'OKA'],
+  [['HONG KONG', 'HKG'], 'HKG'],
+  [['CHANGI', 'SINGAPORE', 'SIN'], 'SIN'],
+  [['SUVARNABHUMI', 'BANGKOK', 'BKK'], 'BKK'],
+  [['INCHEON', 'SEOUL', 'ICN'], 'ICN'],
+  [['PUDONG', 'SHANGHAI', 'PVG'], 'PVG'],
+  [['CHARLES DE GAULLE', 'PARIS', 'CDG'], 'CDG'],
+  [['HEATHROW', 'LONDON', 'LHR'], 'LHR'],
+  [['LOS ANGELES', 'LAX'], 'LAX'],
+  [['KENNEDY', 'JFK'], 'JFK'],
+  [['SYDNEY', 'SYD'], 'SYD'],
+  [['BEIJING', 'PEK'], 'PEK'],
+  [['KUALA LUMPUR', 'KUL'], 'KUL'],
+  [['DENPASAR', 'BALI', 'DPS'], 'DPS'],
+  [['MANILA', 'MNL'], 'MNL'],
+  [['JAKARTA', 'CGK'], 'CGK'],
+];
+
+function getAirportCode(name: string): string {
+  const n = name.toUpperCase();
+  for (const [keywords, code] of AIRPORT_MAP) {
+    if (keywords.some(k => n.includes(k))) return code;
+  }
+  return n.replace(/[^A-Z]/g, '').slice(0, 3) || '???';
+}
+
+function parseFlightActivity(activity: string): { flightNo: string; departure: string; arrival: string } | null {
+  const flightNoMatch = activity.match(/([A-Z]{1,3}\d+)/);
+  if (!flightNoMatch) return null;
+  const parenMatch = activity.match(/\(([^)]+)\)/);
+  if (!parenMatch) return null;
+  const parts = parenMatch[1].split('🛫');
+  if (parts.length !== 2) return null;
+  return { flightNo: flightNoMatch[1], departure: parts[0].trim(), arrival: parts[1].trim() };
+}
+
+function calcFlightDuration(startTime: string, endTime: string): string {
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  if (mins < 0) mins += 24 * 60;
+  return `${Math.floor(mins / 60)}h ${mins % 60 > 0 ? ` ${mins % 60}m` : ''}`.trim();
+}
+
+function getTripNights(startDate: string, endDate: string): string {
+  const nights = differenceInDays(parseISO(endDate), parseISO(startDate));
+  return `${nights + 1}天${nights}夜`;
+}
+
+function getTripStatus(startDate: string, endDate: string): { label: string; color: string } {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const start = parseISO(startDate);
+  const end = parseISO(endDate);
+  const daysUntil = differenceInDays(start, today);
+  if (daysUntil > 0) return { label: `出發還有 ${daysUntil} 天`, color: 'text-blue-500' };
+  if (today <= end) return { label: '旅程進行中', color: 'text-emerald-600' };
+  return { label: '已完成', color: 'text-zinc-400' };
+}
+
 export default function App() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
@@ -131,6 +411,10 @@ export default function App() {
   };
   const [loading, setLoading] = useState(false);
   const [aiAdvice, setAiAdvice] = useState<Record<string, string>>({});
+  const [dailyNeedInput, setDailyNeedInput] = useState('');
+  const [dailyNeedOpen, setDailyNeedOpen] = useState(false);
+  const [dailyNeedLoading, setDailyNeedLoading] = useState(false);
+  const [dailyNeedSuggestion, setDailyNeedSuggestion] = useState<Record<string, string>>({}); // keyed by date
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
   // Multi-user states
@@ -144,10 +428,8 @@ export default function App() {
   const [showTotalExpense, setShowTotalExpense] = useState(false);
   const [showAiActivityInput, setShowAiActivityInput] = useState(false);
   const [aiActivityText, setAiActivityText] = useState('');
-  const [isAiChatOpen, setIsAiChatOpen] = useState(false);
-  const [aiChatInput, setAiChatInput] = useState('');
-  const [aiChatMessages, setAiChatMessages] = useState<{role: 'user' | 'ai', content: string}[]>([]);
-  const [isAiChatLoading, setIsAiChatLoading] = useState(false);
+  const [fabOpen, setFabOpen] = useState(false);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [activityStartTime, setActivityStartTime] = useState('09:00');
   const [activityEndTime, setActivityEndTime] = useState('11:00');
 
@@ -544,15 +826,15 @@ export default function App() {
     const docRef = await addDoc(collection(db, "activities"), newActivity);
     setIsAddingActivity(false);
 
-    // Fetch AI advice asynchronously and update the document
+    // Fetch AI advice + place photo asynchronously
     if (!newActivity.is_flight) {
       geminiService.getItineraryAdvice(activityName, selectedTrip.country)
-        .then(advice => {
-          if (advice) {
-            updateDoc(docRef, { ai_advice: advice });
-          }
-        })
+        .then(advice => { if (advice) updateDoc(docRef, { ai_advice: advice }); })
         .catch(err => console.error("Failed to fetch AI advice", err));
+
+      geminiService.getActivityPhoto(activityName, selectedTrip.country)
+        .then(photoUrl => { if (photoUrl) updateDoc(docRef, { photo_url: photoUrl }); })
+        .catch(err => console.error("Failed to fetch activity photo", err));
     }
   };
 
@@ -668,25 +950,6 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  const handleAiChatSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!aiChatInput.trim() || !selectedTrip) return;
-
-    const userMessage = aiChatInput;
-    setAiChatMessages(prev => [...prev, { role: 'user', content: userMessage }]);
-    setAiChatInput('');
-    setIsAiChatLoading(true);
-
-    try {
-      const response = await geminiService.getItinerarySuggestion(selectedTrip, activities, userMessage);
-      setAiChatMessages(prev => [...prev, { role: 'ai', content: response || "抱歉，我現在無法回答，請稍後再試。" }]);
-    } catch (err) {
-      console.error(err);
-      setAiChatMessages(prev => [...prev, { role: 'ai', content: "發生錯誤，請檢查網路連線。" }]);
-    } finally {
-      setIsAiChatLoading(false);
-    }
-  };
 
   const handleScanActivity = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -771,167 +1034,182 @@ export default function App() {
 
   const generatePdfBlob = async (): Promise<Blob | null> => {
     if (!selectedTrip) return null;
-    
     setLoading(true);
     try {
-      // Translate data to English for PDF
-      const dataToTranslate = {
-        trip: selectedTrip,
-        activities: activities,
-        accommodations: accommodations
-      };
-      
-      const translated = await geminiService.translateItinerary(dataToTranslate);
+      const translated = await geminiService.translateItinerary({
+        trip: selectedTrip, activities, accommodations,
+      });
       const tTrip = translated.trip || selectedTrip;
-      const tActivities = ((translated.activities || activities) as Activity[]).sort((a, b) => a.start_time.localeCompare(b.start_time));
+      // Fix: sort by date first, then start_time
+      const tActivities = ((translated.activities || activities) as Activity[])
+        .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time));
       const tAccommodations = (translated.accommodations || accommodations) as Accommodation[];
 
-      const doc = new jsPDF();
+      const doc = new jsPDF({ unit: 'mm', format: 'a4' });
 
-      // For English PDF, we can use standard fonts or keep Noto for safety, 
-      // but we'll use standard Helvetica/Times for a "pure English" feel if possible.
-      // However, keeping the font setup ensures special characters are handled.
       if (notoSansTCRegular) {
         doc.addFileToVFS('NotoSansTC-Regular.ttf', notoSansTCRegular);
         doc.addFont('NotoSansTC-Regular.ttf', 'NotoSansTC', 'normal');
         doc.setFont('NotoSansTC');
       }
-
       if (notoSerifTCBold) {
         doc.addFileToVFS('NotoSerifTC-Bold.ttf', notoSerifTCBold);
         doc.addFont('NotoSerifTC-Bold.ttf', 'NotoSerifTC', 'bold');
       }
 
       const pageWidth = doc.internal.pageSize.getWidth();
-      
-      // Header
-      doc.setFont('NotoSerifTC', 'bold');
-      doc.setFontSize(24);
-      doc.setTextColor('#18181b');
-      doc.text(tTrip.name, 15, 20);
-      
-      doc.setFont('NotoSansTC', 'normal');
-      doc.setFontSize(10);
-      doc.setTextColor('#71717a');
-      doc.text(`${tTrip.country} | ${tTrip.start_date} ~ ${tTrip.end_date}`, 15, 28);
-      
-      doc.setDrawColor('#e4e4e7');
-      doc.line(15, 35, pageWidth - 15, 35);
-      
-      let currentY = 45;
+      // ── Colour palette ──────────────────────────────────────────────────
+      const C_BLUE     = [37,  99,  235] as [number, number, number]; // blue-600
+      const C_SLATE    = [71,  85,  105] as [number, number, number]; // slate-600
+      const C_SLATE100 = [241, 245, 249] as [number, number, number]; // slate-100
+      const C_SLATE200 = [226, 232, 240] as [number, number, number]; // slate-200
 
-      // Flights
+      // ── Top accent bar ──────────────────────────────────────────────────
+      doc.setFillColor(...C_BLUE);
+      doc.rect(0, 0, pageWidth, 2.5, 'F');
+
+      // ── Trip title ──────────────────────────────────────────────────────
+      doc.setFont('NotoSerifTC', 'bold');
+      doc.setFontSize(20);
+      doc.setTextColor('#0f172a');
+      doc.text(tTrip.name, 15, 20);
+
+      doc.setFont('NotoSansTC', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor('#64748b');
+      doc.text(
+        `${tTrip.country}   ·   ${tTrip.start_date}  –  ${tTrip.end_date}   ·   ${getDateRange().length} days`,
+        15, 28
+      );
+
+      // thin blue rule under header
+      doc.setDrawColor(...C_BLUE);
+      doc.setLineWidth(0.4);
+      doc.line(15, 32, pageWidth - 15, 32);
+      doc.setLineWidth(0.2);
+
+      let currentY = 41;
+
+      // helper: section label with left colour mark
+      const sectionLabel = (text: string, color: [number, number, number]) => {
+        if (currentY > 255) { doc.addPage(); currentY = 20; }
+        doc.setFillColor(...color);
+        doc.rect(15, currentY - 3, 2, 5.5, 'F');
+        doc.setFont('NotoSansTC', 'normal');
+        doc.setFontSize(7.5);
+        doc.setTextColor(...color);
+        doc.text(text.toUpperCase(), 20, currentY + 1.5);
+        currentY += 9;
+      };
+
+      // ── Flights ─────────────────────────────────────────────────────────
       const flights = tActivities.filter(a => a.is_flight);
       if (flights.length > 0) {
-        doc.setFont('NotoSerifTC', 'bold');
-        doc.setFontSize(12);
-        doc.setTextColor('#a1a1aa');
-        doc.text("Flight Information", 15, currentY);
-        doc.setFont('NotoSansTC', 'normal');
-        currentY += 8;
-
+        sectionLabel('Flight Information', C_BLUE);
         autoTable(doc, {
           startY: currentY,
-          head: [['Flight/Activity', 'Date', 'Time']],
-          body: flights.map(f => [f.activity, f.date, `${f.start_time} - ${f.end_time}`]),
-          theme: 'striped',
-          styles: { font: 'NotoSansTC', fontStyle: 'normal' },
-          headStyles: { fillColor: [24, 24, 27], textColor: [255, 255, 255] },
-          margin: { left: 15, right: 15 }
+          head: [['Flight No.', 'Date', 'Departure', 'Arrival', 'Duration']],
+          body: flights.map(f => {
+            const p = parseFlightActivity(f.activity);
+            return [
+              p?.flightNo || f.activity.slice(0, 16),
+              f.date,
+              `${f.start_time}  ${p ? getAirportCode(p.departure) : ''}`,
+              `${f.end_time}  ${p ? getAirportCode(p.arrival) : ''}`,
+              calcFlightDuration(f.start_time, f.end_time),
+            ];
+          }),
+          theme: 'plain',
+          styles: { font: 'NotoSansTC', fontStyle: 'normal', fontSize: 8.5, cellPadding: 2.5, textColor: '#0f172a' },
+          headStyles: { fillColor: C_BLUE, textColor: [255,255,255], fontSize: 7.5 },
+          alternateRowStyles: { fillColor: C_SLATE100 },
+          margin: { left: 15, right: 15 },
         });
-        currentY = (doc as any).lastAutoTable.finalY + 15;
+        currentY = (doc as any).lastAutoTable.finalY + 10;
       }
 
-      // Accommodations
+      // ── Accommodations ──────────────────────────────────────────────────
       if (tAccommodations.length > 0) {
-        doc.setFont('NotoSerifTC', 'bold');
-        doc.setFontSize(12);
-        doc.setTextColor('#a1a1aa');
-        doc.text("Accommodations", 15, currentY);
-        doc.setFont('NotoSansTC', 'normal');
-        currentY += 8;
-
+        if (currentY > 230) { doc.addPage(); currentY = 20; }
+        sectionLabel('Accommodations', C_SLATE);
         autoTable(doc, {
           startY: currentY,
-          head: [['Hotel Name', 'Address', 'Dates']],
-          body: tAccommodations.map(acc => [acc.name, acc.address, `${acc.check_in} ~ ${acc.check_out}`]),
-          theme: 'grid',
-          styles: { font: 'NotoSansTC', fontStyle: 'normal' },
-          headStyles: { fillColor: [113, 113, 122], textColor: [255, 255, 255] },
-          margin: { left: 15, right: 15 }
+          head: [['Hotel', 'Address', 'Check-in', 'Check-out']],
+          body: tAccommodations.map(acc => [acc.name, acc.address, acc.check_in, acc.check_out]),
+          theme: 'plain',
+          styles: { font: 'NotoSansTC', fontStyle: 'normal', fontSize: 8.5, cellPadding: 2.5, textColor: '#0f172a' },
+          headStyles: { fillColor: C_SLATE, textColor: [255,255,255], fontSize: 7.5 },
+          alternateRowStyles: { fillColor: C_SLATE100 },
+          columnStyles: { 1: { cellWidth: 65 } },
+          margin: { left: 15, right: 15 },
         });
-        currentY = (doc as any).lastAutoTable.finalY + 15;
+        currentY = (doc as any).lastAutoTable.finalY + 10;
       }
 
-      // Daily Itinerary
-      doc.setFont('NotoSerifTC', 'bold');
-      doc.setFontSize(12);
-      doc.setTextColor('#a1a1aa');
-      doc.text("Daily Itinerary", 15, currentY);
-      doc.setFont('NotoSansTC', 'normal');
-      currentY += 10;
+      // ── Daily Itinerary ─────────────────────────────────────────────────
+      if (currentY > 220) { doc.addPage(); currentY = 20; }
+      sectionLabel('Daily Itinerary', C_BLUE);
 
       const dates = getDateRange();
       dates.forEach((date, i) => {
         const dayActs = tActivities.filter(a => a.date === date && !a.is_flight);
-        
-        if (currentY > 250) {
-          doc.addPage();
-          currentY = 20;
-        }
+        if (currentY > 255) { doc.addPage(); currentY = 20; }
 
-        doc.setFontSize(10);
+        // Day pill badge
+        const dayLabel = `Day ${i + 1}   ${format(parseISO(date), 'MMM d')}`;
+        const pillW = doc.getTextWidth(dayLabel) + 8;
+        doc.setFillColor(...C_BLUE);
+        doc.roundedRect(15, currentY - 3.5, pillW, 6, 1.5, 1.5, 'F');
+        doc.setFont('NotoSansTC', 'normal');
+        doc.setFontSize(7.5);
         doc.setTextColor(255, 255, 255);
-        doc.setFillColor('#18181b');
-        doc.roundedRect(15, currentY - 5, 25, 7, 1, 1, 'F');
-        doc.text(`Day ${i + 1} (${format(parseISO(date), 'M/d')})`, 18, currentY);
-        
-        doc.setTextColor('#71717a');
-        currentY += 10;
+        doc.text(dayLabel, 19, currentY + 1);
+        currentY += 7;
 
         if (dayActs.length === 0) {
-          doc.setFontSize(9);
-          doc.setTextColor('#a1a1aa');
-          doc.text("No activities scheduled", 25, currentY);
+          doc.setFontSize(8);
+          doc.setTextColor('#94a3b8');
+          doc.text('No activities scheduled.', 19, currentY + 3);
           currentY += 10;
         } else {
-          dayActs.forEach(a => {
-            if (currentY > 270) {
-              doc.addPage();
-              currentY = 20;
-            }
-            
-            doc.setFontSize(9);
-            doc.setTextColor('#18181b');
-            doc.text(`${a.start_time} - ${a.end_time}`, 25, currentY);
-            
-            doc.setFontSize(10);
-            doc.setFont('NotoSansTC', 'normal', 'bold');
-            doc.text(a.activity, 55, currentY);
-            doc.setFont('NotoSansTC', 'normal');
-            
-            if (a.note) {
-              currentY += 5;
-              doc.setFontSize(8);
-              doc.setTextColor('#71717a');
-              const splitNote = doc.splitTextToSize(a.note, pageWidth - 70);
-              doc.text(splitNote, 55, currentY);
-              currentY += (splitNote.length * 4);
-            }
-            
-            currentY += 8;
+          autoTable(doc, {
+            startY: currentY,
+            body: dayActs.map(a => [
+              a.start_time,
+              a.end_time ? `→ ${a.end_time}` : '',
+              a.activity,
+              a.note || '',
+            ]),
+            theme: 'plain',
+            styles: {
+              font: 'NotoSansTC', fontStyle: 'normal',
+              fontSize: 8.5, cellPadding: { top: 2, bottom: 2, left: 3, right: 3 },
+              valign: 'top',
+            },
+            alternateRowStyles: { fillColor: C_SLATE100 },
+            columnStyles: {
+              0: { cellWidth: 14, textColor: [71, 85, 105], halign: 'right' },
+              1: { cellWidth: 14, textColor: [148, 163, 184], fontSize: 7.5 },
+              2: { cellWidth: 85, textColor: [15, 23, 42] },
+              3: { cellWidth: 'auto', textColor: [148, 163, 184], fontSize: 7.5 },
+            },
+            margin: { left: 15, right: 15 },
           });
+          currentY = (doc as any).lastAutoTable.finalY + 6;
         }
-        currentY += 5;
       });
 
-      // Footer
+      // ── Footer on every page ────────────────────────────────────────────
       const pageCount = (doc as any).internal.getNumberOfPages();
-      for (let i = 1; i <= pageCount; i++) {
-        doc.setPage(i);
-        doc.setFontSize(8);
-        doc.setTextColor('#a1a1aa');
-        doc.text("Generated by AI Travel Planner", pageWidth / 2, 285, { align: 'center' });
+      for (let p = 1; p <= pageCount; p++) {
+        doc.setPage(p);
+        // bottom blue bar
+        doc.setFillColor(...C_BLUE);
+        doc.rect(0, doc.internal.pageSize.getHeight() - 2.5, pageWidth, 2.5, 'F');
+        doc.setFontSize(7);
+        doc.setTextColor('#94a3b8');
+        doc.text('AI Travel Planner', pageWidth / 2, doc.internal.pageSize.getHeight() - 5, { align: 'center' });
+        doc.text(`${p} / ${pageCount}`, pageWidth - 15, doc.internal.pageSize.getHeight() - 5, { align: 'right' });
       }
 
       return doc.output('blob');
@@ -942,6 +1220,7 @@ export default function App() {
       setLoading(false);
     }
   };
+
 
   const handleDownloadPDF = async () => {
     if (!selectedTrip) return;
@@ -1033,15 +1312,14 @@ export default function App() {
       await updateDoc(activityDoc, activityData);
       setEditingActivity(null);
 
-      // Regenerate AI advice if name changed and it's not a flight
+      // Regenerate AI advice + photo if name changed and it's not a flight
       if (nameChanged && !editingActivity.is_flight) {
         geminiService.getItineraryAdvice(editingActivity.activity, selectedTrip.country)
-          .then(advice => {
-            if (advice) {
-              updateDoc(activityDoc, { ai_advice: advice });
-            }
-          })
+          .then(advice => { if (advice) updateDoc(activityDoc, { ai_advice: advice }); })
           .catch(err => console.error("Failed to update AI advice", err));
+        geminiService.getActivityPhoto(editingActivity.activity, selectedTrip.country)
+          .then(photoUrl => { if (photoUrl) updateDoc(activityDoc, { photo_url: photoUrl }); })
+          .catch(err => console.error("Failed to update activity photo", err));
       }
     } catch (err) {
       console.error(err);
@@ -1185,19 +1463,29 @@ export default function App() {
       </div>
       
       <div className="grid gap-4">
-        {trips.map(trip => (
-          <motion.div 
+        {trips.map(trip => {
+          const theme = getCountryTheme(trip.country);
+          const status = getTripStatus(trip.start_date, trip.end_date);
+          return (
+          <motion.div
             key={trip.id}
             whileTap={{ scale: 0.98 }}
             onClick={() => handleSelectTrip(trip)}
-            className="bg-white p-5 rounded-2xl border border-zinc-200 shadow-sm flex items-center justify-between cursor-pointer hover:border-zinc-300 transition-colors"
+            className="relative overflow-hidden p-5 rounded-2xl border shadow-sm flex items-center justify-between cursor-pointer transition-all hover:shadow-md"
+            style={{ background: theme.gradient, borderColor: theme.borderColor }}
           >
-            <div>
+            {/* Landmark SVG decoration */}
+            <div className="absolute right-0 bottom-0 pointer-events-none select-none">
+              {theme.landmark}
+            </div>
+
+            {/* Content */}
+            <div className="relative z-10">
               <div className="flex items-center gap-3">
                 <h3 className="text-lg font-bold text-zinc-900">{trip.name}</h3>
                 {currentUser?.role === 'admin' && (
                   <div className="flex items-center gap-1">
-                    <button 
+                    <button
                       onClick={(e) => {
                         e.stopPropagation();
                         setTripToManage(trip);
@@ -1208,7 +1496,7 @@ export default function App() {
                     >
                       <Users size={14} />
                     </button>
-                    <button 
+                    <button
                       onClick={(e) => handleDeleteTrip(e, trip)}
                       className="p-1.5 text-zinc-300 hover:text-red-500 transition-colors"
                       title="刪除旅程"
@@ -1221,20 +1509,27 @@ export default function App() {
               <p className="text-sm text-zinc-500 mt-1 flex items-center gap-1">
                 <Calendar size={14} className="text-zinc-400" /> {trip.start_date} ~ {trip.end_date}
               </p>
-              <div className="flex gap-2 mt-2">
-                <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 text-[10px] font-bold rounded uppercase tracking-wider">
-                  {trip.country}
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                <span className="px-2 py-0.5 bg-white/70 text-zinc-700 text-[10px] font-bold rounded-full border border-white/80 tracking-wide">
+                  {theme.flagEmoji} {trip.country}
+                </span>
+                <span className="px-2 py-0.5 bg-white/70 text-zinc-500 text-[10px] font-medium rounded-full border border-white/80">
+                  {getTripNights(trip.start_date, trip.end_date)}
+                </span>
+                <span className={`px-2 py-0.5 bg-white/70 text-[10px] font-medium rounded-full border border-white/80 ${status.color}`}>
+                  {status.label}
                 </span>
                 {trip.owner_id !== currentUser?.id && (
-                  <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded uppercase tracking-wider">
+                  <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-full border border-blue-100">
                     受邀行程
                   </span>
                 )}
               </div>
             </div>
-            <ChevronRight className="text-zinc-300" size={20} />
+            <ChevronRight className="relative z-10 flex-shrink-0 text-zinc-300" size={20} />
           </motion.div>
-        ))}
+          );
+        })}
         {trips.length === 0 && (
           <div className="text-center py-20 text-zinc-400">
             <p className="font-medium">尚未建立任何旅程</p>
@@ -1266,165 +1561,320 @@ export default function App() {
     return (
       <div className="flex flex-col h-screen bg-zinc-50">
         {/* Header */}
-        <div className="bg-white p-4 border-b border-zinc-200 sticky top-0 z-10 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <button onClick={() => setSelectedTrip(null)} className="p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-600">
-                <ArrowLeft size={20} />
-              </button>
-              <div>
-                <h2 className="text-lg font-bold text-zinc-900">{selectedTrip.name}</h2>
-                <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{selectedTrip.country}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={handleExportPDF}
-                disabled={isGeneratingPdf}
-                className="p-2 bg-zinc-100 text-zinc-600 rounded-xl hover:bg-zinc-200 transition-colors disabled:opacity-50"
-                title="匯出 PDF"
+        <div className="bg-white border-b border-zinc-200 sticky top-0 z-10 shadow-sm">
+          {/* ── Collapsible top row ── */}
+          <AnimatePresence initial={false}>
+            {!headerCollapsed && (
+              <motion.div
+                key="header-top"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.18 }}
+                className="overflow-hidden"
               >
-                {isGeneratingPdf ? <Loader2 size={20} className="animate-spin" /> : <Download size={20} />}
-              </button>
-              <button 
-                onClick={() => {
-                  if (showTotalExpense) {
-                    setIsExpenseAnalysisOpen(true);
-                  } else {
-                    setShowTotalExpense(true);
-                  }
-                }}
-                className="bg-zinc-900 text-white px-4 py-2 rounded-xl shadow-sm active:scale-95 transition-all text-right min-w-[100px]"
-              >
-                <div className="text-[10px] uppercase font-bold opacity-60">總支出 (TWD)</div>
-                <div className="text-md font-bold">
-                  {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()}` : '點擊查看'}
+                <div className="flex items-center justify-between px-4 pt-3 pb-2">
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setSelectedTrip(null)} className="p-1.5 hover:bg-zinc-100 rounded-full transition-colors text-zinc-600">
+                      <ArrowLeft size={18} />
+                    </button>
+                    <div>
+                      <h2 className="text-base font-bold text-zinc-900 leading-tight">{selectedTrip.name}</h2>
+                      <p className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">{selectedTrip.country}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button onClick={() => setIsAddingFlight(true)} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title="新增航班">
+                      <Plane size={16} />
+                    </button>
+                    <button onClick={() => setIsAddingAccommodation(true)} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title="新增住宿">
+                      <Hotel size={16} />
+                    </button>
+                    <button
+                      onClick={handleExportPDF}
+                      disabled={isGeneratingPdf}
+                      className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors disabled:opacity-50"
+                      title="匯出 PDF"
+                    >
+                      {isGeneratingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    </button>
+                    <button
+                      onClick={() => { showTotalExpense ? setIsExpenseAnalysisOpen(true) : setShowTotalExpense(true); }}
+                      className="bg-zinc-900 text-white px-3 py-1.5 rounded-lg shadow-sm active:scale-95 transition-all text-right"
+                    >
+                      <div className="text-[8px] uppercase font-bold opacity-60 leading-tight">總支出</div>
+                      <div className="text-xs font-bold leading-tight">
+                        {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()}` : '查看'}
+                      </div>
+                    </button>
+                  </div>
                 </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ── Compact bar when collapsed ── */}
+          {headerCollapsed && (
+            <div className="flex items-center gap-2 px-3 py-2">
+              <button onClick={() => setSelectedTrip(null)} className="p-1 hover:bg-zinc-100 rounded-full transition-colors text-zinc-500">
+                <ArrowLeft size={16} />
+              </button>
+              <span className="text-sm font-bold text-zinc-700 flex-1 truncate">{selectedTrip.name}</span>
+              <button
+                onClick={() => { showTotalExpense ? setIsExpenseAnalysisOpen(true) : setShowTotalExpense(true); }}
+                className="text-[10px] font-bold text-zinc-500 bg-zinc-100 px-2 py-1 rounded-lg"
+              >
+                {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()} TWD` : '查看支出'}
               </button>
             </div>
-          </div>
+          )}
 
           {/* Date Tabs */}
-          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+          <div className="flex gap-2 overflow-x-auto px-4 pb-2.5 no-scrollbar">
             {dates.map((date, i) => (
               <button
                 key={date}
                 onClick={() => setActiveTab(date)}
                 className={cn(
-                  "px-4 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border",
-                  activeTab === date 
-                    ? "bg-zinc-900 text-white border-zinc-900 shadow-sm" 
+                  "px-3.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border flex-shrink-0",
+                  activeTab === date
+                    ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
                     : "bg-white text-zinc-500 border-zinc-200"
                 )}
               >
-                Day {i + 1} <span className="font-normal opacity-60 ml-1.5 text-[10px]">({format(parseISO(date), 'M/d')})</span>
+                Day {i + 1} <span className="font-normal opacity-60 ml-1 text-[10px]">({format(parseISO(date), 'M/d')})</span>
               </button>
             ))}
           </div>
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-32 max-w-2xl mx-auto w-full">
-          {/* Core Info Section */}
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <button 
-                onClick={() => setIsCoreInfoExpanded(!isCoreInfoExpanded)}
-                className="flex items-center gap-2 text-sm font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors"
-              >
-                核心資訊
-                <MoreHorizontal size={14} className={cn("transition-transform", isCoreInfoExpanded ? "rotate-90" : "rotate-0")} />
-              </button>
-              <div className="flex gap-2">
-                <button onClick={() => setIsAddingFlight(true)} className="p-2 bg-white border border-zinc-200 rounded-lg text-zinc-600 hover:bg-zinc-50 transition-colors shadow-sm">
-                  <Plane size={16} />
-                </button>
-                <button onClick={() => setIsAddingAccommodation(true)} className="p-2 bg-white border border-zinc-200 rounded-lg text-zinc-600 hover:bg-zinc-50 transition-colors shadow-sm">
-                  <Hotel size={16} />
-                </button>
-              </div>
-            </div>
-            
-            <AnimatePresence>
-              {isCoreInfoExpanded && (
-                <motion.div 
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="grid gap-3 overflow-hidden"
-                >
-                  {activities.filter(a => a.is_flight).map(flight => (
-                    <div key={flight.id} onClick={() => setEditingActivity(flight)} className="bg-white p-3 rounded-xl border border-zinc-200 shadow-sm flex items-center gap-3 cursor-pointer hover:border-zinc-300 transition-colors group">
-                      <div className="w-10 h-10 bg-blue-50 text-blue-500 rounded-lg flex items-center justify-center">
-                        <Plane size={20} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="text-sm font-bold text-zinc-900">{flight.activity}</div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] font-medium text-zinc-400">{flight.date}</span>
-                          <span className="text-[10px] font-bold text-zinc-900">{flight.start_time} - {flight.end_time}</span>
-                        </div>
-                      </div>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleDeleteActivity(flight.id); }}
-                        className="p-2 text-zinc-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
-                  {accommodations.map(acc => (
-                    <div key={acc.id} className="bg-white p-3 rounded-xl border border-zinc-200 shadow-sm flex items-center gap-3 group">
-                      <div className="w-10 h-10 bg-zinc-50 text-zinc-500 rounded-lg flex items-center justify-center">
-                        <Hotel size={20} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="text-sm font-bold text-zinc-900">{acc.name}</div>
-                        <div className="text-[10px] font-medium text-zinc-400 mt-0.5">{acc.check_in} ~ {acc.check_out}</div>
-                      </div>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleDeleteAccommodation(acc.id); }}
-                        className="p-2 text-zinc-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
+        <div
+          className="flex-1 overflow-y-auto p-4 space-y-4 pb-32 max-w-2xl mx-auto w-full"
+          onScroll={e => setHeaderCollapsed(e.currentTarget.scrollTop > 55)}
+        >
 
-          <div className="space-y-4">
-            <div className="flex justify-between items-center">
-              <button 
-                onClick={() => setIsChecklistExpanded(!isChecklistExpanded)}
-                className="flex items-center gap-2 text-sm font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors"
-              >
+
+          {/* ── Per-day: Hotel check-in / check-out ── */}
+          {(() => {
+            const checkIns  = accommodations.filter(a => a.check_in  === activeTab);
+            const checkOuts = accommodations.filter(a => a.check_out === activeTab);
+            if (checkIns.length === 0 && checkOuts.length === 0) return null;
+            return (
+              <div className="space-y-2">
+                {checkIns.map(acc => (
+                  <div key={`ci-${acc.id}`} className="bg-emerald-50/50 border border-emerald-100 p-3 rounded-2xl flex items-center gap-3 group">
+                    <div className="w-9 h-9 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <Hotel size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide mb-0.5">🔑 今日入住</div>
+                      <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
+                      <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}</div>
+                    </div>
+                    {acc.map_url && (
+                      <a href={acc.map_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                        className="text-xs font-bold text-emerald-500 hover:underline flex items-center gap-1 flex-shrink-0">
+                        <MapPin size={11} /> 地圖
+                      </a>
+                    )}
+                    <button onClick={() => handleDeleteAccommodation(acc.id)}
+                      className="p-1.5 text-zinc-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+                {checkOuts.map(acc => (
+                  <div key={`co-${acc.id}`} className="bg-amber-50/50 border border-amber-100 p-3 rounded-2xl flex items-center gap-3 group">
+                    <div className="w-9 h-9 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center flex-shrink-0">
+                      <Hotel size={16} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-0.5">🧳 今日退房</div>
+                      <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
+                      <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}</div>
+                    </div>
+                    {acc.map_url && (
+                      <a href={acc.map_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
+                        className="text-xs font-bold text-amber-500 hover:underline flex items-center gap-1 flex-shrink-0">
+                        <MapPin size={11} /> 地圖
+                      </a>
+                    )}
+                    <button onClick={() => handleDeleteAccommodation(acc.id)}
+                      className="p-1.5 text-zinc-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0">
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* ── Checklist: Day 1 only ── */}
+          {activeTab === dates[0] && (
+            <div className="space-y-2">
+              <button onClick={() => setIsChecklistExpanded(!isChecklistExpanded)}
+                className="flex items-center gap-2 text-sm font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors w-full">
                 準備清單
                 <MoreHorizontal size={14} className={cn("transition-transform", isChecklistExpanded ? "rotate-90" : "rotate-0")} />
               </button>
+              <AnimatePresence>
+                {isChecklistExpanded && (
+                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                    <Checklist />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-            
+          )}
+
+          {/* ── Itinerary Section ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">今日行程</h3>
+              <button
+                onClick={() => { setDailyNeedOpen(o => !o); setDailyNeedSuggestion(s => ({ ...s, [activeTab]: '' })); }}
+                className={cn(
+                  "flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border transition-colors",
+                  dailyNeedOpen
+                    ? "bg-amber-50 text-amber-700 border-amber-200"
+                    : "bg-zinc-50 text-zinc-500 border-zinc-200 hover:border-amber-200 hover:text-amber-600"
+                )}
+              >
+                <Sparkles size={11} /> 今日需求
+              </button>
+            </div>
+
+            {/* ── AI Daily Need Input ── */}
             <AnimatePresence>
-              {isChecklistExpanded && (
-                <motion.div 
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
+              {dailyNeedOpen && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
                   className="overflow-hidden"
                 >
-                  <Checklist />
+                  <div className="bg-gradient-to-br from-amber-50 to-stone-50 border border-amber-100 rounded-2xl p-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Sparkles size={13} className="text-amber-500" />
+                      <span className="text-xs font-bold text-amber-700">告訴 AI 你今天的需求</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        value={dailyNeedInput}
+                        onChange={e => setDailyNeedInput(e.target.value)}
+                        onKeyDown={async e => {
+                          if (e.key === 'Enter' && dailyNeedInput.trim() && !dailyNeedLoading) {
+                            e.preventDefault();
+                            if (!selectedTrip) return;
+                            setDailyNeedLoading(true);
+                            try {
+                              const result = await geminiService.getDailyNeedSuggestion(
+                                dailyNeedInput.trim(),
+                                currentActivities.map(a => ({ start_time: a.start_time, end_time: a.end_time, activity: a.activity })),
+                                selectedTrip.country,
+                                activeTab,
+                              );
+                              setDailyNeedSuggestion(s => ({ ...s, [activeTab]: result }));
+                            } catch { /* silent */ }
+                            setDailyNeedLoading(false);
+                          }
+                        }}
+                        placeholder="例：想買抹茶、找藥妝店、喝一杯精品咖啡..."
+                        className="flex-1 text-sm px-3 py-2 bg-white border border-amber-100 rounded-xl focus:border-amber-300 outline-none placeholder:text-stone-300"
+                      />
+                      <button
+                        disabled={!dailyNeedInput.trim() || dailyNeedLoading}
+                        onClick={async () => {
+                          if (!selectedTrip || !dailyNeedInput.trim()) return;
+                          setDailyNeedLoading(true);
+                          try {
+                            const result = await geminiService.getDailyNeedSuggestion(
+                              dailyNeedInput.trim(),
+                              currentActivities.map(a => ({ start_time: a.start_time, end_time: a.end_time, activity: a.activity })),
+                              selectedTrip.country,
+                              activeTab,
+                            );
+                            setDailyNeedSuggestion(s => ({ ...s, [activeTab]: result }));
+                          } catch { /* silent */ }
+                          setDailyNeedLoading(false);
+                        }}
+                        className="px-3 py-2 bg-amber-500 text-white rounded-xl font-bold text-xs disabled:opacity-40 hover:bg-amber-600 transition-colors flex items-center gap-1.5 flex-shrink-0"
+                      >
+                        {dailyNeedLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                        {dailyNeedLoading ? '思考中' : '取得建議'}
+                      </button>
+                    </div>
+
+                    {/* Suggestion result */}
+                    {dailyNeedSuggestion[activeTab] && (() => {
+                      try {
+                        const s = JSON.parse(dailyNeedSuggestion[activeTab]);
+                        const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.mapQuery || s.place)}`;
+                        return (
+                          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                            className="bg-white rounded-xl border border-amber-100 p-3 space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-bold text-zinc-900 leading-snug">{s.place}</div>
+                                {s.area && <div className="text-[10px] text-stone-400 mt-0.5 flex items-center gap-1"><MapPin size={9}/>{s.area}</div>}
+                              </div>
+                              {s.suggestedTime && (
+                                <span className="text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                                  🕐 {s.suggestedTime}
+                                </span>
+                              )}
+                            </div>
+                            {s.reason && <p className="text-[11px] text-stone-500 leading-relaxed">{s.reason}</p>}
+                            <div className="flex gap-2 pt-1">
+                              <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700 hover:underline">
+                                <MapPin size={11} /> 查看地圖
+                              </a>
+                              <button
+                                onClick={async () => {
+                                  if (!selectedTrip) return;
+                                  const newActivity = {
+                                    trip_id: selectedTrip.id,
+                                    date: activeTab,
+                                    start_time: s.suggestedTime || '12:00',
+                                    end_time: '',
+                                    activity: s.place,
+                                    map_url: mapsUrl,
+                                    note: s.reason || '',
+                                    is_flight: false,
+                                    travel_mode: 'transit' as const,
+                                    ai_advice: '',
+                                    photo_url: '',
+                                    travel_time_to_next: '',
+                                  };
+                                  const docRef = await addDoc(collection(db, 'activities'), newActivity);
+                                  // Async enrich with photo + advice
+                                  geminiService.getItineraryAdvice(s.place, selectedTrip.country)
+                                    .then(advice => { if (advice) updateDoc(docRef, { ai_advice: advice }); }).catch(() => {});
+                                  geminiService.getActivityPhoto(s.place, selectedTrip.country)
+                                    .then(photoUrl => { if (photoUrl) updateDoc(docRef, { photo_url: photoUrl }); }).catch(() => {});
+                                  setDailyNeedOpen(false);
+                                  setDailyNeedInput('');
+                                  setDailyNeedSuggestion(s2 => ({ ...s2, [activeTab]: '' }));
+                                }}
+                                className="flex items-center gap-1 text-xs font-bold text-white bg-zinc-900 px-2.5 py-1 rounded-lg hover:bg-zinc-700 transition-colors"
+                              >
+                                <Plus size={11} /> 加入今日行程
+                              </button>
+                            </div>
+                          </motion.div>
+                        );
+                      } catch {
+                        return <p className="text-xs text-stone-500 italic">{dailyNeedSuggestion[activeTab]}</p>;
+                      }
+                    })()}
+                  </div>
                 </motion.div>
               )}
             </AnimatePresence>
-          </div>
 
-          {/* Itinerary Section */}
-          <div className="space-y-2">
-            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">今日行程</h3>
-            
-            {/* Automatic Hotel Start */}
+            {/* Staying hotel as start point */}
             {currentAccommodations.map(acc => (
               <div key={`start-${acc.id}`} className="bg-zinc-100/50 p-3 rounded-2xl border border-zinc-200 border-dashed flex items-center gap-3 mb-2">
                 <div className="w-8 h-8 bg-white text-zinc-400 rounded-lg flex items-center justify-center border border-zinc-100">
@@ -1442,106 +1892,258 @@ export default function App() {
                 <p className="text-sm text-zinc-400">這天還沒有行程喔！</p>
               </div>
             ) : (
-              currentActivities.map((activity, idx) => (
-                <div key={activity.id}>
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    onClick={() => setEditingActivity(activity)}
-                    className={cn(
-                      "p-4 rounded-2xl border shadow-sm relative group cursor-pointer transition-colors",
-                      activity.is_flight 
-                        ? "bg-blue-50/30 border-blue-100 hover:border-blue-200" 
-                        : "bg-white border-zinc-200 hover:border-zinc-300"
-                    )}
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className={cn(
-                          "text-xs font-bold px-2 py-0.5 rounded-md",
-                          activity.is_flight ? "bg-blue-100 text-blue-700" : "bg-zinc-50 text-zinc-900"
-                        )}>{activity.start_time} - {activity.end_time}</span>
-                        <h4 className="text-md font-bold text-zinc-900 flex items-center gap-2">
-                          {!!activity.is_flight && <Plane size={14} className="text-blue-500" />}
-                          {activity.activity}
-                        </h4>
-                      </div>
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); handleDeleteActivity(activity.id); }}
-                        className="p-1.5 text-zinc-300 hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                    
-                    {activity.note && (
-                      <p className="text-xs text-zinc-500 mb-3 leading-relaxed">{activity.note}</p>
-                    )}
+              /* ── Timeline ── */
+              <div>
+                {currentActivities.map((activity, idx) => {
+                  const isLast = idx === currentActivities.length - 1;
+                  const next = currentActivities[idx + 1];
 
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        {/* AI Advice is now automatic */}
-                      </div>
-                      {activity.map_url && (
-                        <a 
-                          href={activity.map_url} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="flex items-center gap-1 text-xs font-bold text-blue-500 hover:underline"
-                        >
-                          <MapPin size={12} /> 查看地圖
-                        </a>
-                      )}
-                    </div>
+                  // Flight card helpers
+                  const allFlightsSorted = activities
+                    .filter(a => a.is_flight)
+                    .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time));
+                  const flightGlobalIdx = allFlightsSorted.findIndex(f => f.id === activity.id);
+                  const isOutbound = flightGlobalIdx < Math.ceil(allFlightsSorted.length / 2);
+                  const flightParsed = activity.is_flight ? parseFlightActivity(activity.activity) : null;
+                  const flightDuration = activity.is_flight ? calcFlightDuration(activity.start_time, activity.end_time) : null;
+                  const depCode = flightParsed ? getAirportCode(flightParsed.departure) : '???';
+                  const arrCode = flightParsed ? getAirportCode(flightParsed.arrival) : '???';
+                  const depLabel = flightParsed?.departure.split(' ').slice(0, 2).join(' ') || '';
+                  const arrLabel = flightParsed?.arrival.split(' ').slice(0, 2).join(' ') || '';
 
-                    {activity.ai_advice && (
-                      <motion.div 
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        className="mt-3 p-3 bg-zinc-50 rounded-xl text-[11px] text-zinc-600 border border-zinc-100 italic"
-                      >
-                        <div className="flex items-center gap-1 mb-1 text-purple-600 font-bold not-italic">
-                          <Sparkles size={10} /> AI 建議
+                  // Transport connector helpers
+                  const modeIcon = next?.travel_mode === 'walking' ? '🚶' : next?.travel_mode === 'driving' ? '🚕' : '🚇';
+                  const gmMode = next?.travel_mode === 'walking' ? 'walking' : next?.travel_mode === 'driving' ? 'driving' : 'transit';
+                  const mapsUrl = next
+                    ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(activity.activity + ', ' + selectedTrip!.country)}&destination=${encodeURIComponent(next.activity + ', ' + selectedTrip!.country)}&travelmode=${gmMode}`
+                    : '';
+
+                  // AI advice renderer (shared)
+                  const TYPE_META: Record<string, { icon: string; label: string; color: string }> = {
+                    restaurant: { icon: '🍽', label: '餐廳', color: 'text-rose-600 bg-rose-50 border-rose-100' },
+                    cafe:       { icon: '☕', label: '咖啡廳', color: 'text-amber-700 bg-amber-50 border-amber-200' },
+                    landmark:   { icon: '🏛', label: '景點', color: 'text-blue-600 bg-blue-50 border-blue-100' },
+                    shopping:   { icon: '🛍', label: '購物', color: 'text-purple-600 bg-purple-50 border-purple-100' },
+                    other:      { icon: '✨', label: '其他', color: 'text-stone-600 bg-stone-100 border-stone-200' },
+                  };
+                  const renderAiAdvice = () => {
+                    if (!activity.ai_advice) return null;
+                    try {
+                      const p = JSON.parse(activity.ai_advice);
+                      const meta = TYPE_META[p.type] || TYPE_META.other;
+                      return (
+                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
+                          className="mt-3 p-3 bg-amber-50/60 rounded-xl text-[11px] border border-amber-100">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <Sparkles size={10} className="text-amber-500" />
+                            <span className="text-amber-700 font-bold text-[10px] uppercase tracking-wide">AI 建議</span>
+                            <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full border", meta.color)}>{meta.icon} {meta.label}</span>
+                          </div>
+                          {p.headline && <p className="font-bold text-stone-700 mb-1.5">{p.headline}</p>}
+                          {Array.isArray(p.tips) && p.tips.length > 0 && (
+                            <ul className="space-y-0.5">
+                              {p.tips.map((tip: string, i: number) => (
+                                <li key={i} className="flex gap-1.5 text-stone-600">
+                                  <span className="text-amber-400 mt-0.5 flex-shrink-0">•</span><span>{tip}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </motion.div>
+                      );
+                    } catch {
+                      return (
+                        <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
+                          className="mt-3 p-3 bg-amber-50/60 rounded-xl text-[11px] text-stone-600 border border-amber-100 italic">
+                          <div className="flex items-center gap-1 mb-1 text-amber-600 font-bold not-italic">
+                            <Sparkles size={10} /> AI 建議
+                          </div>
+                          {activity.ai_advice}
+                        </motion.div>
+                      );
+                    }
+                  };
+
+                  return (
+                    <div key={activity.id} className="flex gap-0">
+                      {/* ── Left: time label + dot + line ── */}
+                      <div className="w-14 flex-shrink-0 flex flex-col items-end">
+                        <span className="text-[10px] font-bold text-stone-400 pr-2.5 mt-3.5 leading-none tabular-nums">
+                          {activity.start_time}
+                        </span>
+                        <div className="flex flex-col items-center flex-1 pr-2 mt-1">
+                          <div className={cn(
+                            "w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm flex-shrink-0",
+                            activity.is_flight ? "bg-blue-400" : "bg-amber-400"
+                          )} />
+                          {!isLast && <div className="w-px flex-1 bg-stone-200 mt-1 min-h-[16px]" />}
                         </div>
-                        {activity.ai_advice}
-                      </motion.div>
-                    )}
-                  </motion.div>
-
-                  {idx < currentActivities.length - 1 && (() => {
-                    const next = currentActivities[idx + 1];
-                    const modeIcon = next.travel_mode === 'walking' ? '🚶' : next.travel_mode === 'driving' ? '🚕' : '🚇';
-                    return (
-                      <div className="py-1 flex flex-col items-center gap-1">
-                        <div className="w-px h-3 bg-zinc-200" />
-                        <div className="flex items-center gap-1.5 text-xs text-zinc-400 bg-zinc-50 px-3 py-1 rounded-full border border-zinc-100">
-                          <span>{modeIcon}</span>
-                          <span>{activity.travel_time_to_next ?? <span className="animate-pulse">計算中...</span>}</span>
-                        </div>
-                        <div className="w-px h-3 bg-zinc-200" />
                       </div>
-                    );
-                  })()}
-                </div>
-              ))
+
+                      {/* ── Right: card + transport connector ── */}
+                      <div className="flex-1 min-w-0 pb-4 pl-2">
+                        {activity.is_flight ? (
+                          /* ── Fancy flight card ── */
+                          <motion.div
+                            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                            onClick={() => setEditingActivity(activity)}
+                            className={cn(
+                              "rounded-2xl border p-4 cursor-pointer transition-all group relative overflow-hidden",
+                              isOutbound
+                                ? "bg-blue-50/40 border-blue-100 hover:border-blue-200"
+                                : "bg-violet-50/40 border-violet-100 hover:border-violet-200"
+                            )}
+                          >
+                            <div className="flex items-center justify-between mb-3">
+                              <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", isOutbound ? "bg-blue-100 text-blue-600" : "bg-violet-100 text-violet-600")}>
+                                {isOutbound ? '✈ 去程' : '✈ 回程'}
+                              </span>
+                              <span className="text-xs font-black text-zinc-700 tracking-widest">{flightParsed?.flightNo ?? activity.activity.slice(0, 10)}</span>
+                              <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", isOutbound ? "bg-blue-100 text-blue-600" : "bg-violet-100 text-violet-600")}>
+                                ⏱ {flightDuration}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 mb-3">
+                              <div className="text-center w-14 flex-shrink-0">
+                                <div className={cn("text-2xl font-black tracking-tight leading-none", isOutbound ? "text-blue-700" : "text-violet-700")}>{depCode}</div>
+                                <div className="text-[9px] text-zinc-400 mt-0.5 leading-tight">{depLabel}</div>
+                              </div>
+                              <div className="flex-1 flex items-center gap-1 min-w-0">
+                                <span className="text-base">🛫</span>
+                                <div className={cn("flex-1 border-t-2 border-dashed", isOutbound ? "border-blue-200" : "border-violet-200")} />
+                                <Plane size={13} className={cn("flex-shrink-0", isOutbound ? "text-blue-400" : "text-violet-400")} />
+                                <div className={cn("flex-1 border-t-2 border-dashed", isOutbound ? "border-blue-200" : "border-violet-200")} />
+                                <span className="text-base">🛬</span>
+                              </div>
+                              <div className="text-center w-14 flex-shrink-0">
+                                <div className={cn("text-2xl font-black tracking-tight leading-none", isOutbound ? "text-blue-700" : "text-violet-700")}>{arrCode}</div>
+                                <div className="text-[9px] text-zinc-400 mt-0.5 leading-tight">{arrLabel}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-bold text-zinc-800">{activity.start_time}</span>
+                              <span className="text-[10px] text-zinc-400 font-medium">{activity.date}</span>
+                              <span className="text-sm font-bold text-zinc-800">{activity.end_time}</span>
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(activity.id); }}
+                              className="absolute top-3 right-3 p-1.5 text-zinc-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                              <X size={14} />
+                            </button>
+                          </motion.div>
+                        ) : (
+                          /* ── Normal activity card ── */
+                          <motion.div
+                            initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                            onClick={() => setEditingActivity(activity)}
+                            className="rounded-2xl border shadow-sm relative group cursor-pointer transition-colors overflow-hidden bg-stone-50 border-stone-200 hover:border-amber-300"
+                          >
+                            {/* Place photo */}
+                            {activity.photo_url && (
+                              <div key={activity.photo_url} className="h-36 w-full overflow-hidden">
+                                <img src={activity.photo_url} alt={activity.activity}
+                                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                  onLoad={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = ''; }}
+                                  onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none'; }}
+                                />
+                              </div>
+                            )}
+                            <div className="p-3.5">
+                              <div className="flex justify-between items-start mb-1.5">
+                                <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+                                  <h4 className="text-sm font-bold text-zinc-900 leading-snug">{activity.activity}</h4>
+                                  {activity.end_time && (
+                                    <span className="text-[10px] text-stone-400 font-medium flex-shrink-0">～ {activity.end_time}</span>
+                                  )}
+                                </div>
+                                <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(activity.id); }}
+                                  className="p-1.5 text-stone-300 hover:text-red-500 transition-colors flex-shrink-0 ml-1">
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                              {activity.note && (
+                                <p className="text-xs text-stone-500 mb-2.5 leading-relaxed">{activity.note}</p>
+                              )}
+                              {activity.map_url && (
+                                <div className="flex justify-end">
+                                  <a href={activity.map_url} target="_blank" rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700 hover:underline">
+                                    <MapPin size={11} /> 查看地圖
+                                  </a>
+                                </div>
+                              )}
+                              {renderAiAdvice()}
+                            </div>
+                          </motion.div>
+                        )}
+
+                        {/* Transport connector */}
+                        {!isLast && next && (
+                          <div className="py-1.5 pl-1">
+                            <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              className="inline-flex items-center gap-1.5 text-xs text-stone-400 bg-stone-50 px-3 py-1 rounded-full border border-stone-100 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200 transition-colors">
+                              <span>{modeIcon}</span>
+                              <span>{activity.travel_time_to_next ?? <span className="animate-pulse">計算中...</span>}</span>
+                              <MapPin size={10} className="opacity-50" />
+                            </a>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
 
-        {/* Floating Action Buttons */}
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 flex gap-2 bg-white p-1.5 rounded-2xl shadow-xl border border-zinc-200 z-20">
-          <button 
-            onClick={() => setIsAddingActivity(true)}
-            className="flex items-center gap-1.5 px-4 py-2.5 bg-zinc-900 text-white rounded-xl font-bold shadow-sm active:scale-95 transition-all whitespace-nowrap text-sm"
+        {/* ── FAB ── */}
+        <div className="fixed bottom-6 right-5 z-20 flex flex-col items-end gap-2.5">
+          <AnimatePresence>
+            {fabOpen && (
+              <>
+                {/* backdrop */}
+                <motion.div
+                  key="backdrop"
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  className="fixed inset-0 z-[-1]"
+                  onClick={() => setFabOpen(false)}
+                />
+                <motion.button
+                  key="expense"
+                  initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                  transition={{ delay: 0.04 }}
+                  onClick={() => { setIsAddingExpense(true); setFabOpen(false); }}
+                  className="flex items-center gap-2 bg-white text-zinc-800 px-4 py-2.5 rounded-2xl shadow-lg border border-zinc-200 font-bold text-sm active:scale-95 whitespace-nowrap"
+                >
+                  <Wallet size={15} /> 新增記帳
+                </motion.button>
+                <motion.button
+                  key="activity"
+                  initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                  onClick={() => { setIsAddingActivity(true); setFabOpen(false); }}
+                  className="flex items-center gap-2 bg-zinc-900 text-white px-4 py-2.5 rounded-2xl shadow-lg font-bold text-sm active:scale-95 whitespace-nowrap"
+                >
+                  <Plus size={15} /> 新增行程
+                </motion.button>
+              </>
+            )}
+          </AnimatePresence>
+          <button
+            onClick={() => setFabOpen(o => !o)}
+            className={cn(
+              "w-14 h-14 rounded-full shadow-xl flex items-center justify-center transition-all active:scale-95",
+              fabOpen ? "bg-zinc-200 text-zinc-600" : "bg-zinc-900 text-white"
+            )}
           >
-            <Plus size={18} /> 新增行程
-          </button>
-          <button 
-            onClick={() => setIsAddingExpense(true)}
-            className="flex items-center gap-1.5 px-4 py-2.5 bg-white text-zinc-900 border border-zinc-200 rounded-xl font-bold shadow-sm active:scale-95 transition-all whitespace-nowrap text-sm"
-          >
-            <Wallet size={18} /> 新增記帳
+            <motion.div animate={{ rotate: fabOpen ? 45 : 0 }} transition={{ duration: 0.2 }}>
+              <Plus size={26} />
+            </motion.div>
           </button>
         </div>
       </div>
@@ -1663,83 +2265,6 @@ export default function App() {
         )}
 
         {/* AI Chat Button */}
-        {selectedTrip && (
-          <>
-            <button
-              onClick={() => setIsAiChatOpen(true)}
-              className="fixed bottom-6 right-6 w-14 h-14 bg-zinc-900 text-white rounded-full shadow-xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-50"
-              title="AI 行程顧問"
-            >
-              <Sparkles size={24} />
-            </button>
-
-            <AnimatePresence>
-              {isAiChatOpen && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 20, scale: 0.95 }}
-                  className="fixed bottom-24 right-6 w-80 md:w-96 bg-white rounded-2xl shadow-2xl border border-zinc-200 z-50 flex flex-col overflow-hidden max-h-[600px]"
-                >
-                  <div className="p-4 bg-zinc-900 text-white flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Sparkles size={18} />
-                      <h3 className="font-bold">AI 行程顧問</h3>
-                    </div>
-                    <button onClick={() => setIsAiChatOpen(false)} className="p-1 hover:bg-zinc-800 rounded-lg transition-colors">
-                      <X size={18} />
-                    </button>
-                  </div>
-                  
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[300px] max-h-[400px] bg-zinc-50">
-                    {aiChatMessages.length === 0 && (
-                      <div className="text-center text-zinc-400 text-sm py-8">
-                        <p>👋 你好！我是你的 AI 行程顧問。</p>
-                        <p className="mt-2">不知道某個景點該排在哪一天嗎？</p>
-                        <p>問我就對了！我會根據你的現有行程給出建議。</p>
-                      </div>
-                    )}
-                    {aiChatMessages.map((msg, idx) => (
-                      <div key={idx} className={cn("flex", msg.role === 'user' ? "justify-end" : "justify-start")}>
-                        <div className={cn(
-                          "max-w-[85%] p-3 rounded-2xl text-sm whitespace-pre-wrap",
-                          msg.role === 'user' 
-                            ? "bg-zinc-900 text-white rounded-tr-none" 
-                            : "bg-white border border-zinc-200 text-zinc-800 rounded-tl-none shadow-sm"
-                        )}>
-                          {msg.content}
-                        </div>
-                      </div>
-                    ))}
-                    {isAiChatLoading && (
-                      <div className="flex justify-start">
-                        <div className="bg-white border border-zinc-200 p-3 rounded-2xl rounded-tl-none shadow-sm">
-                          <Loader2 size={16} className="animate-spin text-zinc-400" />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <form onSubmit={handleAiChatSubmit} className="p-3 bg-white border-t border-zinc-100 flex gap-2">
-                    <input
-                      value={aiChatInput}
-                      onChange={(e) => setAiChatInput(e.target.value)}
-                      placeholder="例如：我想去晴空塔，排在哪天比較順？"
-                      className="flex-1 bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-zinc-400"
-                    />
-                    <button 
-                      type="submit" 
-                      disabled={!aiChatInput.trim() || isAiChatLoading}
-                      className="p-2 bg-zinc-900 text-white rounded-xl disabled:opacity-50 hover:bg-zinc-800 transition-colors"
-                    >
-                      <Navigation size={18} className="rotate-90" />
-                    </button>
-                  </form>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </>
-        )}
 
         {isUserManagementOpen && (
           <Modal title="使用者管理" onClose={() => setIsUserManagementOpen(false)}>
@@ -2320,35 +2845,80 @@ export default function App() {
                   className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none" 
                 />
               </div>
+              <div>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">日期</label>
+                <input
+                  type="date"
+                  value={editingActivity.date}
+                  onChange={e => setEditingActivity({...editingActivity, date: e.target.value})}
+                  min={selectedTrip.start_date}
+                  max={selectedTrip.end_date}
+                  required
+                  className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-bold text-zinc-600 mb-1">開始時間</label>
-                  <input 
-                    type="time" 
-                    value={editingActivity.start_time} 
+                  <input
+                    type="time"
+                    value={editingActivity.start_time}
                     onChange={e => setEditingActivity({...editingActivity, start_time: e.target.value})}
-                    required 
-                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" 
+                    required
+                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-zinc-600 mb-1">結束時間</label>
-                  <input 
-                    type="time" 
-                    value={editingActivity.end_time} 
+                  <input
+                    type="time"
+                    value={editingActivity.end_time}
                     onChange={e => setEditingActivity({...editingActivity, end_time: e.target.value})}
-                    required 
-                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" 
+                    required
+                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   />
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-bold text-zinc-600 mb-1">Google Map 連結</label>
-                <input 
-                  value={editingActivity.map_url || ''} 
+                <input
+                  value={editingActivity.map_url || ''}
                   onChange={e => setEditingActivity({...editingActivity, map_url: e.target.value})}
-                  className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none" 
+                  className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none"
                   placeholder="https://maps.google.com/..."
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm font-bold text-zinc-600">封面照片</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!selectedTrip) return;
+                      geminiService.getActivityPhoto(editingActivity.activity, selectedTrip.country)
+                        .then(photoUrl => { if (photoUrl) setEditingActivity(prev => prev ? {...prev, photo_url: photoUrl} : prev); })
+                        .catch(() => {});
+                    }}
+                    className="flex items-center gap-1 text-xs text-purple-600 font-bold hover:text-purple-800 transition-colors"
+                  >
+                    <Sparkles size={11} /> AI 搜尋照片
+                  </button>
+                </div>
+                {editingActivity.photo_url && (
+                  <div className="mb-2 rounded-xl overflow-hidden h-32">
+                    <img
+                      src={editingActivity.photo_url}
+                      alt="preview"
+                      className="w-full h-full object-cover"
+                      onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none'; }}
+                    />
+                  </div>
+                )}
+                <input
+                  value={editingActivity.photo_url || ''}
+                  onChange={e => setEditingActivity({...editingActivity, photo_url: e.target.value})}
+                  className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none text-xs"
+                  placeholder="貼上圖片 URL，或點「AI 搜尋照片」自動取得"
                 />
               </div>
               <div>
@@ -2359,6 +2929,42 @@ export default function App() {
                   className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none min-h-[100px]" 
                 />
               </div>
+              {/* AI Advice preview + regenerate */}
+              {!editingActivity.is_flight && (
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-sm font-bold text-zinc-600">AI 建議</label>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!selectedTrip) return;
+                        try {
+                          const advice = await geminiService.getItineraryAdvice(editingActivity.activity, selectedTrip.country);
+                          if (advice) setEditingActivity(prev => prev ? {...prev, ai_advice: advice} : prev);
+                        } catch {}
+                      }}
+                      className="flex items-center gap-1 text-xs text-amber-600 font-bold hover:text-amber-800 transition-colors"
+                    >
+                      <Sparkles size={11} /> 重新生成 AI 建議
+                    </button>
+                  </div>
+                  {editingActivity.ai_advice && (() => {
+                    try {
+                      const parsed = JSON.parse(editingActivity.ai_advice);
+                      return (
+                        <div className="p-3 bg-amber-50/60 rounded-xl text-[11px] border border-amber-100 space-y-1">
+                          <p className="font-bold text-stone-700">{parsed.headline}</p>
+                          {Array.isArray(parsed.tips) && parsed.tips.map((tip: string, i: number) => (
+                            <p key={i} className="text-stone-600 flex gap-1.5"><span className="text-amber-400">•</span>{tip}</p>
+                          ))}
+                        </div>
+                      );
+                    } catch {
+                      return <p className="p-3 bg-amber-50/60 rounded-xl text-[11px] text-stone-600 border border-amber-100 italic">{editingActivity.ai_advice}</p>;
+                    }
+                  })()}
+                </div>
+              )}
               <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg transition-all">
                 更新行程
               </button>

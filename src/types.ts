@@ -29,6 +29,7 @@ export interface Activity {
   travel_mode: 'walking' | 'transit' | 'driving';
   ai_advice?: string;
   travel_time_to_next?: string;
+  photo_url?: string;
 }
 
 export interface Accommodation {
