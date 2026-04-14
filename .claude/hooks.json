@@ -1,0 +1,17 @@
+{
+  "_comment": "DRAFT — pre-deploy safety hooks. The deploy footguns on this repo are real (worktree deploy, missing .env -> blank page). These hooks block obvious mistakes at the tool-call level. Paths assume Windows + git-bash; adjust if needed.",
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'CMD=$(jq -r .tool_input.command); if echo \"$CMD\" | grep -qE \"firebase\\\\s+deploy\"; then TOP=$(git rev-parse --show-toplevel 2>/dev/null); GITDIR=$(git rev-parse --git-dir 2>/dev/null); if [ -n \"$GITDIR\" ] && [ \"$GITDIR\" != \".git\" ] && [ \"$GITDIR\" != \"$TOP/.git\" ]; then echo \"BLOCKED: firebase deploy from a worktree. cd to the main repo dir first.\" >&2; exit 2; fi; if [ ! -s .env ] || ! grep -q \"GEMINI_API_KEY=.\\\\+\" .env; then echo \"BLOCKED: .env is missing or GEMINI_API_KEY is empty. The app will white-screen in production without it.\" >&2; exit 2; fi; if [ ! -d dist ] || [ -z \"$(ls -A dist 2>/dev/null)\" ]; then echo \"BLOCKED: dist/ is empty. Run npm run build first.\" >&2; exit 2; fi; fi'"
+          }
+        ]
+      }
+    ]
+  }
+}
