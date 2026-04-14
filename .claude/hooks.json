@@ -8,7 +8,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'CMD=$(jq -r .tool_input.command); if echo \"$CMD\" | grep -qE \"firebase\\\\s+deploy\"; then TOP=$(git rev-parse --show-toplevel 2>/dev/null); GITDIR=$(git rev-parse --git-dir 2>/dev/null); if [ -n \"$GITDIR\" ] && [ \"$GITDIR\" != \".git\" ] && [ \"$GITDIR\" != \"$TOP/.git\" ]; then echo \"BLOCKED: firebase deploy from a worktree. cd to the main repo dir first.\" >&2; exit 2; fi; if [ ! -s .env ] || ! grep -q \"GEMINI_API_KEY=.\\\\+\" .env; then echo \"BLOCKED: .env is missing or GEMINI_API_KEY is empty. The app will white-screen in production without it.\" >&2; exit 2; fi; if [ ! -d dist ] || [ -z \"$(ls -A dist 2>/dev/null)\" ]; then echo \"BLOCKED: dist/ is empty. Run npm run build first.\" >&2; exit 2; fi; fi'"
+            "command": "bash -c 'CMD=$(jq -r .tool_input.command); if echo \"$CMD\" | grep -qE \"firebase\\\\s+deploy\"; then TOP=$(git rev-parse --show-toplevel 2>/dev/null); GITDIR=$(git rev-parse --git-dir 2>/dev/null); if [ -n \"$GITDIR\" ] && [ \"$GITDIR\" != \".git\" ] && [ \"$GITDIR\" != \"$TOP/.git\" ]; then echo \"BLOCKED: firebase deploy from a worktree. cd to the main repo dir first.\" >&2; exit 2; fi; if [ ! -s .env ] || ! grep -q \"VITE_GEMINI_API_KEY=.\\\\+\" .env; then echo \"BLOCKED: .env is missing or VITE_GEMINI_API_KEY is empty. The app will white-screen in production without it.\" >&2; exit 2; fi; if [ ! -d dist ] || [ -z \"$(ls -A dist 2>/dev/null)\" ]; then echo \"BLOCKED: dist/ is empty. Run npm run build first.\" >&2; exit 2; fi; fi'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'CMD=$(jq -r .tool_input.command 2>/dev/null || echo \"\"); if echo \"$CMD\" | grep -qE \"firebase\\\\s+deploy\"; then TOP=$(git rev-parse --show-toplevel 2>/dev/null); STATUS=$(git -C \"$TOP\" status --porcelain 2>/dev/null); if [ -n \"$STATUS\" ]; then echo \"REMINDER: Working tree still has uncommitted changes. The next push to main will trigger CI which builds from the committed state and will overwrite this deploy. Checkpoint now to lock in the current UI: git add <files> && git commit -m \\\"checkpoint: deployed state $(date +%Y-%m-%d)\\\" && git push origin main\" >&2; fi; fi'"
           }
         ]
       }

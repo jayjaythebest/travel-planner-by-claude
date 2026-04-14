@@ -35,13 +35,14 @@ Data model lives in Firestore: trips (top-level), activities (per trip, with tim
 
 ## Setup
 Required env vars:
-- `GEMINI_API_KEY` — consumed at build time via `process.env.GEMINI_API_KEY` (Vite `define`)
+- `VITE_GEMINI_API_KEY` — exposed at build time via Vite's standard `VITE_*` prefix; accessed as `import.meta.env.VITE_GEMINI_API_KEY`
+- `VITE_GOOGLE_MAPS_API_KEY` — used by `getActivityPhoto()` in geminiService for Google Places photo lookup
 - SMTP vars (`SMTP_USER`, `SMTP_PASS`, `SMTP_HOST`, `SMTP_PORT`) — see `.env.example`
 
 Local:
 ```bash
 npm install
-# .env at repo root with GEMINI_API_KEY=...
+# .env at repo root with VITE_GEMINI_API_KEY=... and VITE_GOOGLE_MAPS_API_KEY=...
 npm run dev
 ```
 
@@ -57,8 +58,8 @@ npm run dev
 **RULE 1 — Never deploy from a git worktree.**
 Uncommitted UI changes live in the working tree. If Claude is operating inside `.claude/worktrees/<something>/` or any other worktree, the `dist/` built there may be missing the user's latest uncommitted changes, or the wrong `.env`. Always `cd` back to the canonical repo path (`C:\Users\User\OneDrive\Documents\Travel planner`) before building for deploy. If unsure, run `git rev-parse --show-toplevel` and `git worktree list` first.
 
-**RULE 2 — `.env` with `GEMINI_API_KEY` must exist in the build directory at build time.**
-Vite inlines it via `define`. If `.env` is missing or empty, `new GoogleGenAI(...)` throws at module init and the app is a blank white page in production. Before any deploy, verify the key is set: the build log should not contain `process.env.GEMINI_API_KEY` string literals in `dist/assets/*.js`.
+**RULE 2 — `.env` with `VITE_GEMINI_API_KEY` must exist in the build directory at build time.**
+Vite automatically exposes `VITE_*` vars via `import.meta.env.*`. If `.env` is missing or empty, `new GoogleGenAI(...)` throws at module init and the app is a blank white page in production. Before any deploy, verify the key is set: check `.env` contains `VITE_GEMINI_API_KEY=<real-key>` and the build log does not contain the literal string `VITE_GEMINI_API_KEY` inside `dist/assets/*.js`.
 
 **RULE 3 — Browsers cache aggressively.**
 After deploy, the user (and testers) must hard-refresh (Ctrl+Shift+R / Cmd+Shift+R) or test in an incognito window. If a bug report says "still broken after deploy," first ask them to hard-refresh before debugging.
@@ -68,12 +69,12 @@ After deploy, the user (and testers) must hard-refresh (Ctrl+Shift+R / Cmd+Shift
 
 ## Do NOT
 - Do **not** run `firebase deploy` from a worktree. Ever.
-- Do **not** run `firebase deploy` without verifying `.env` contains a real `GEMINI_API_KEY`.
+- Do **not** run `firebase deploy` without verifying `.env` contains a real `VITE_GEMINI_API_KEY`.
 - Do **not** skip the build step (`npm run build`) before a manual deploy.
 - Do **not** commit `.env`, `.firebase/` cache, or anything under `dist/`.
 - Do **not** change `firebase.json`'s `public: "dist"` — it would break deploys.
 - Do **not** switch Firebase projects; this app is tied to `travel-planner-cf0d4` and the Firestore data lives there.
-- Do **not** assume a bug is fixed just because local dev works — the Vite `define` behavior for env vars differs between dev (runtime) and build (inlined).
+- Do **not** assume a bug is fixed just because local dev works — Vite's `VITE_*` env var inlining can behave differently between dev (runtime substitution) and production build (inlined at build time).
 
 ## Conventions
 - Components in PascalCase, hooks in `use*`, services in `src/services/`.
