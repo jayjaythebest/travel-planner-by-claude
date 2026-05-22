@@ -1430,8 +1430,9 @@ export default function App() {
   };
 
   function renderTripList() { return (
+    <div className="h-full overflow-y-auto">
     <div className="p-4 space-y-6 max-w-2xl mx-auto">
-      <div className="flex justify-between items-center py-4">
+      <div className="flex justify-between items-center py-4 safe-top">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">我的旅程</h1>
           <p className="text-sm text-zinc-400 mt-1">歡迎回來, {currentUser?.username}</p>
@@ -1538,6 +1539,7 @@ export default function App() {
         )}
       </div>
     </div>
+    </div>
   ); }
 
   function renderTripDetail() {
@@ -1561,7 +1563,7 @@ export default function App() {
     return (
       <div className="flex flex-col h-screen bg-zinc-50">
         {/* Header */}
-        <div className="bg-white border-b border-zinc-200 sticky top-0 z-10 shadow-sm">
+        <div className="bg-white border-b border-zinc-200 sticky top-0 z-10 shadow-sm safe-top">
           {/* ── Collapsible top row ── */}
           <AnimatePresence initial={false}>
             {!headerCollapsed && (
@@ -2099,7 +2101,7 @@ export default function App() {
         </div>
 
         {/* ── FAB ── */}
-        <div className="fixed bottom-6 right-5 z-20 flex flex-col items-end gap-2.5">
+        <div className="fixed right-5 z-20 flex flex-col items-end gap-2.5" style={{ bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}>
           <AnimatePresence>
             {fabOpen && (
               <>
@@ -2151,7 +2153,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900">
+    <div className="h-screen overflow-hidden bg-zinc-50 font-sans text-zinc-900">
       <AnimatePresence mode="wait">
         {!selectedTrip ? (
           <motion.div 
@@ -3074,11 +3076,11 @@ function Modal({ title, children, onClose }: { title: string, children: React.Re
       exit={{ opacity: 0 }}
       className="fixed inset-0 bg-zinc-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
     >
-      <motion.div 
+      <motion.div
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
-        className="bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl p-6 shadow-2xl"
+        className="bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] shadow-2xl"
       >
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-lg font-bold text-zinc-900">{title}</h3>
