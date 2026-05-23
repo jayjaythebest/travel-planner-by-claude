@@ -7,9 +7,33 @@
 }
 
 @layer base {
+  html {
+    /* Prevent iOS rubber-band bounce on the root */
+    height: 100%;
+    overflow: hidden;
+  }
+
   body {
     @apply bg-stone-50 text-stone-900 antialiased;
     -webkit-tap-highlight-color: transparent;
+    /* Prevent double-tap zoom on iOS */
+    touch-action: manipulation;
+    /* Keep body scroll locked; individual containers handle their own scroll */
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    /* Smooth text sizing on iOS Safari */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Smooth momentum scrolling for all scrollable containers */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Remove focus ring on touch-initiated focus (iOS UX convention) */
+  :focus:not(:focus-visible) {
+    outline: none;
   }
 }
 
@@ -19,4 +43,15 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* iOS safe area utilities */
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-bottom-margin {
+  margin-bottom: env(safe-area-inset-bottom, 0px);
 }
