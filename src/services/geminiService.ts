@@ -25,7 +25,7 @@ export const geminiService = {
   },
 
   async parseFlightInfo(text: string, imageBase64?: string, mimeType?: string) {
-    const parts: any[] = [{ text: `你是一個專業的旅遊助手。請從以下資訊中提取航班資訊：\n"${text}"` }];
+    const parts: any[] = [{ text: `你是一個專業的旅遊助手。請從以下資訊中提取航班資訊：\n"${text}"\n所有時間一律轉成 24 小時制 HH:MM（00:00–23:59）。下午／傍晚／晚上的時間請加 12 小時，例如下午 2:30 PM = 14:30、晚上 11:50 PM = 23:50、中午 12:00 PM = 12:00、凌晨 12:30 AM = 00:30。` }];
     if (imageBase64 && mimeType) {
       parts.push({ inlineData: { data: imageBase64, mimeType } });
     }
@@ -40,9 +40,9 @@ export const geminiService = {
           properties: {
             flightNo: { type: Type.STRING },
             departureAirport: { type: Type.STRING },
-            departureTime: { type: Type.STRING, description: "HH:MM" },
+            departureTime: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30" },
             arrivalAirport: { type: Type.STRING },
-            arrivalTime: { type: Type.STRING, description: "HH:MM" },
+            arrivalTime: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30" },
             date: { type: Type.STRING, description: "YYYY-MM-DD" },
           },
           required: ["flightNo", "departureAirport", "departureTime", "arrivalAirport", "arrivalTime", "date"],
@@ -105,7 +105,7 @@ export const geminiService = {
   },
 
   async parseActivityInfo(text: string, imageBase64?: string, mimeType?: string) {
-    const parts: any[] = [{ text: `你是一個專業的旅遊助手。請從以下資訊中提取單一活動行程資訊：\n"${text}"\n如果資訊中沒有明確的日期或時間，請留空或根據上下文推測最合理的數值。` }];
+    const parts: any[] = [{ text: `你是一個專業的旅遊助手。請從以下資訊中提取單一活動行程資訊：\n"${text}"\n如果資訊中沒有明確的日期或時間，請留空或根據上下文推測最合理的數值。所有時間一律轉成 24 小時制 HH:MM（00:00–23:59），下午／傍晚／晚上請加 12 小時，例如下午 2:30 PM = 14:30。` }];
     if (imageBase64 && mimeType) {
       parts.push({ inlineData: { data: imageBase64, mimeType } });
     }
@@ -120,8 +120,8 @@ export const geminiService = {
           properties: {
             activity: { type: Type.STRING, description: "活動名稱" },
             date: { type: Type.STRING, description: "YYYY-MM-DD" },
-            start_time: { type: Type.STRING, description: "HH:MM" },
-            end_time: { type: Type.STRING, description: "HH:MM" },
+            start_time: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30" },
+            end_time: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30" },
             note: { type: Type.STRING, description: "備註或細節" },
             map_url: { type: Type.STRING, description: "Google Maps URL if available" },
           },
