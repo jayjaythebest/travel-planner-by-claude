@@ -20,7 +20,7 @@ Merging to `main` triggers `.github/workflows/firebase-deploy.yml`, which builds
    git rev-parse --show-toplevel
    git worktree list
    ```
-   If the current path contains `.claude/worktrees/` or the git dir is not `<repo>/.git`, `cd` to `C:\Users\User\OneDrive\Documents\Travel planner` first. The working tree of a worktree will not contain the user's uncommitted UI tweaks that live in the main repo.
+   If the current path contains `.claude/worktrees/` or the git dir is not `<repo>/.git`, `cd` to `C:\Projects\travel-planner` first (NOT `C:\Users\User\OneDrive\Documents\Travel planner` — that pre-migration clone is still on disk and is frozen at April 2026). The working tree of a worktree will not contain the user's uncommitted UI tweaks that live in the main repo.
 
 2. **Confirm `.env` exists and has a real `VITE_GEMINI_API_KEY`.**
    ```bash

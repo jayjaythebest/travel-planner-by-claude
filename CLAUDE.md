@@ -56,7 +56,7 @@ npm run dev
 ### Deploy gotchas (bake these in — these have bitten in production)
 
 **RULE 1 — Never deploy from a git worktree.**
-Uncommitted UI changes live in the working tree. If Claude is operating inside `.claude/worktrees/<something>/` or any other worktree, the `dist/` built there may be missing the user's latest uncommitted changes, or the wrong `.env`. Always `cd` back to the canonical repo path (`C:\Users\User\OneDrive\Documents\Travel planner`) before building for deploy. If unsure, run `git rev-parse --show-toplevel` and `git worktree list` first.
+Uncommitted UI changes live in the working tree. If Claude is operating inside `.claude/worktrees/<something>/` or any other worktree, the `dist/` built there may be missing the user's latest uncommitted changes, or the wrong `.env`. Always `cd` back to the canonical repo path (`C:\Projects\travel-planner`) before building for deploy. A stale clone is still on disk at `C:\Users\User\OneDrive\Documents\Travel planner` — it was the canonical path before the 2026-05-24 migration and is frozen at `13307a9` (April 2026), so a build there ships months-old code over the live site. If unsure, run `git rev-parse --show-toplevel` and `git worktree list` first.
 
 **RULE 2 — `.env` with `VITE_GEMINI_API_KEY` must exist in the build directory at build time.**
 Vite automatically exposes `VITE_*` vars via `import.meta.env.*`. If `.env` is missing or empty, `new GoogleGenAI(...)` throws at module init and the app is a blank white page in production. Before any deploy, verify the key is set: check `.env` contains `VITE_GEMINI_API_KEY=<real-key>` and the build log does not contain the literal string `VITE_GEMINI_API_KEY` inside `dist/assets/*.js`.
