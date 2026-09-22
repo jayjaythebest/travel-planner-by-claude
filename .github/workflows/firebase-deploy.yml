@@ -25,6 +25,13 @@ jobs:
         run: npm run build
         env:
           VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
+          # Vite only inlines what is in the environment AT BUILD TIME, so a
+          # VITE_* var missing from this block is empty in production however
+          # well .env is filled in locally. VITE_GOOGLE_MAPS_API_KEY was
+          # missing here from 2026-04 until 2026-09-21, which is why the
+          # Places photo lookup only ever worked in dev.
+          VITE_GOOGLE_MAPS_API_KEY: ${{ secrets.VITE_GOOGLE_MAPS_API_KEY }}
+          VITE_GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.VITE_GOOGLE_OAUTH_CLIENT_ID }}
 
       - name: Deploy to Firebase Hosting
         run: npx firebase-tools deploy --only hosting --token ${{ secrets.FIREBASE_TOKEN }} --project travel-planner-cf0d4

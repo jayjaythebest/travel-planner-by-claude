@@ -17,6 +17,14 @@
     <link rel="manifest" href="/manifest.json" />
 
     <title>旅程規劃助手</title>
+
+    <!-- Google Identity Services, loaded here rather than on demand.
+         requestAccessToken() opens a popup, and Chrome only allows that while
+         the user's click is still "active". Fetching this script inside the
+         click handler spends that activation on the network wait, so the popup
+         is blocked silently - no error, no callback, just a button that spins
+         forever. Loading it up front keeps the click path synchronous. -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
   </head>
   <body>
     <div id="root"></div>

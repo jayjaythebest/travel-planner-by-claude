@@ -21,13 +21,15 @@ import {
   MoreHorizontal,
   Download,
   Share2,
-  Users
+  Users,
+  CalendarCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, CURRENCY_MAP, COUNTRY_LIST } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, User } from './types';
 import { geminiService } from './services/geminiService';
 import { db } from './services/firebase';
+import { syncTripToCalendar, CalendarError } from './services/googleCalendar';
 import { 
   collection,
   query,
@@ -416,6 +418,8 @@ export default function App() {
   const [dailyNeedLoading, setDailyNeedLoading] = useState(false);
   const [dailyNeedSuggestion, setDailyNeedSuggestion] = useState<Record<string, string>>({}); // keyed by date
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isSyncingCalendar, setIsSyncingCalendar] = useState(false);
+  const [calendarMessage, setCalendarMessage] = useState('');
 
   // Multi-user states
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -1276,8 +1280,50 @@ export default function App() {
     };
   };
 
+  useEffect(() => {
+    if (!calendarMessage) return;
+    const timer = setTimeout(() => setCalendarMessage(''), 6000);
+    return () => clearTimeout(timer);
+  }, [calendarMessage]);
+
   const handleExportPDF = async () => {
     setIsExportModalOpen(true);
+  };
+
+  /**
+   * Push this trip's activities into Google Calendar, as a full mirror.
+   *
+   * Nothing is marked "confirmed" anywhere: an activity that exists is an
+   * activity that belongs on the calendar, an edited one moves its own event,
+   * and one deleted here takes its event with it. That is only possible because
+   * trip.gcal.events remembers what the last run created — so it is written
+   * back below even when nothing was added, and a failed run deliberately
+   * writes nothing rather than a partial map that would orphan events.
+   */
+  const handleSyncCalendar = async () => {
+    if (!selectedTrip || isSyncingCalendar) return;
+    setIsSyncingCalendar(true);
+    setCalendarMessage('');
+    try {
+      const result = await syncTripToCalendar(selectedTrip, activities);
+      const gcal = { events: result.events, syncedAt: new Date().toISOString() };
+      await updateDoc(doc(db, "trips", selectedTrip.documentId || selectedTrip.id), { gcal });
+      // trips come from fetchTrips()'s getDocs, not a listener, so the local
+      // copies have to be moved by hand or the next sync reads a stale map and
+      // duplicates every event.
+      setSelectedTrip(prev => (prev ? { ...prev, gcal } : prev));
+      setTrips(prev => prev.map(t => (t.id === selectedTrip.id ? { ...t, gcal } : t)));
+      setCalendarMessage(
+        `已連動 Google Calendar：新增 ${result.added}、更新 ${result.updated}、移除 ${result.removed}`,
+      );
+    } catch (err) {
+      // CalendarError already carries a sentence written for the user; anything
+      // else is a bug and must not be echoed raw into the UI.
+      setCalendarMessage(err instanceof CalendarError ? err.message : '同步失敗，請稍後再試。');
+      console.error(err);
+    } finally {
+      setIsSyncingCalendar(false);
+    }
   };
 
   const handleDeleteActivity = async (id: string) => {
@@ -1599,6 +1645,18 @@ export default function App() {
                       title="匯出 PDF"
                     >
                       {isGeneratingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                    </button>
+                    <button
+                      onClick={handleSyncCalendar}
+                      disabled={isSyncingCalendar}
+                      className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors disabled:opacity-50"
+                      title={
+                        selectedTrip.gcal?.syncedAt
+                          ? `連動 Google Calendar（上次同步 ${format(parseISO(selectedTrip.gcal.syncedAt), 'MM/dd HH:mm')}）`
+                          : '連動 Google Calendar'
+                      }
+                    >
+                      {isSyncingCalendar ? <Loader2 size={16} className="animate-spin" /> : <CalendarCheck size={16} />}
                     </button>
                     <button
                       onClick={() => { showTotalExpense ? setIsExpenseAnalysisOpen(true) : setShowTotalExpense(true); }}
@@ -3052,6 +3110,17 @@ export default function App() {
           </Modal>
         )}
       </AnimatePresence>
+
+      {/* Calendar sync result. Tapping dismisses; it also clears itself, so a
+          message from one trip cannot follow the user into another. */}
+      {calendarMessage && (
+        <div
+          onClick={() => setCalendarMessage('')}
+          className="fixed left-1/2 -translate-x-1/2 bottom-[calc(1.25rem+env(safe-area-inset-bottom,0px))] z-[110] max-w-[90vw] px-4 py-2.5 bg-zinc-900 text-white text-xs font-medium rounded-xl shadow-lg cursor-pointer"
+        >
+          {calendarMessage}
+        </div>
+      )}
 
       {/* Global Loader */}
       {loading && (

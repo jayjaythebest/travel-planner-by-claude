@@ -37,6 +37,7 @@ Data model lives in Firestore: trips (top-level), activities (per trip, with tim
 Required env vars:
 - `VITE_GEMINI_API_KEY` — exposed at build time via Vite's standard `VITE_*` prefix; accessed as `import.meta.env.VITE_GEMINI_API_KEY`
 - `VITE_GOOGLE_MAPS_API_KEY` — used by `getActivityPhoto()` in geminiService for Google Places photo lookup
+- `VITE_GOOGLE_OAUTH_CLIENT_ID` — OAuth 2.0 **Web application** client ID for the Google Calendar sync. Unlike the two above, a missing value is a supported state: `services/googleCalendar.ts` reads it into a const and never validates at module scope, so the app still loads and only the calendar button reports it is unconfigured. It is not a secret — it ships in the bundle, and what protects it is the client's authorized-JavaScript-origins list, which must contain `https://travel-planner-cf0d4.web.app` for production and `http://localhost:5173` for dev
 - SMTP vars (`SMTP_USER`, `SMTP_PASS`, `SMTP_HOST`, `SMTP_PORT`) — see `.env.example`
 
 Local:
@@ -81,4 +82,6 @@ After deploy, the user (and testers) must hard-refresh (Ctrl+Shift+R / Cmd+Shift
 - Firestore access goes through `services/firebase.ts` — no direct `getFirestore()` calls scattered across components.
 - PDF export is non-trivial due to embedded CJK fonts; when touching `jspdf` code, test with Traditional Chinese activity names before shipping.
 - Travel-time fields on activities are persisted to Firestore and only recalculated when activities change (perf fix — see commit `d3d6337`). Don't regress this by recalculating on every render.
+- **Google Calendar sync is a full mirror, and `trip.gcal.events` is what makes it one.** Nothing in this app is marked "confirmed" — `getTripStatus()` derives its badge from dates alone — so the rule is simply that an activity which exists belongs on the calendar. That only works because the trip document remembers the activity-id → event-id map from the last run: an edited activity patches its own event and one deleted in the app has its event removed on the next sync. Two things hold it together. The map lives on the **trip**, not on each activity, because a deleted activity would take its own event id with it and nothing could ever clean up after it. And a failed sync writes **nothing** back, because a partial map silently orphans every event it forgot. Re-pressing the button must always be safe: the access token expires after an hour, so a retry is the normal path, not the exception.
+- **Calendar event times carry the destination's time zone, never the browser's.** `TIMEZONE_MAP` in `utils.ts` is keyed the same way `CURRENCY_MAP` is. A naive `09:00` sent without `timeZone` is read in the *viewer's* zone, which puts a Tokyo morning in the middle of the night for someone still at home. USA is a knowing approximation — one country field cannot express six zones.
 - No test suite; rely on typecheck + manual smoke in dev + hard-refreshed preview after deploy.

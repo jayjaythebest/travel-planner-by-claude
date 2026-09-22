@@ -7,6 +7,21 @@ export interface Trip {
   country: string;
   owner_id: string;
   shared_with: string[]; // Array of user IDs
+  /**
+   * What this app has already put in the user's Google Calendar.
+   *
+   * Kept on the trip rather than on each activity for two reasons: an activity
+   * deleted in the app takes its row with it, and the event id with it, so a
+   * later sync could never clean up after it; and the travel-time fields on
+   * Activity are write-sensitive (see CLAUDE.md) and do not need a sync writing
+   * to every one of them.
+   */
+  gcal?: {
+    /** activity id -> Google event id. */
+    events: Record<string, string>;
+    /** ISO timestamp of the last successful sync, for the button's subtitle. */
+    syncedAt: string;
+  };
 }
 
 export interface User {
