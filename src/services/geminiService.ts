@@ -280,6 +280,100 @@ ${schedule}
     return response.text?.trim() || '';
   },
 
+  /**
+   * Read a whole itinerary out of an uploaded file.
+   *
+   * Two things about real itinerary documents drive this shape. They are
+   * written as "Day One / Day Two", not calendar dates, so the schema below
+   * numbers days from 1 and leaves start_date empty unless the document states
+   * one — the caller asks the user for a departure date and derives the rest.
+   * And they describe rather than schedule ("group dinner at the hotel"), so
+   * times have to be plausible inventions, which is exactly why nothing here
+   * writes to Firestore: the caller shows it all for review first.
+   *
+   * `countries` is injected rather than described, because the returned label
+   * is stored in trip.country and is the key into TIMEZONE_MAP and
+   * CURRENCY_MAP. A free-form answer like "Tanzania" would miss both and the
+   * trip would silently get Taipei times.
+   */
+  async parseItineraryFile(
+    fileBase64: string,
+    mimeType: string,
+    countries: string[],
+  ) {
+    const countryLines = countries.map((c) => '   - ' + c).join('\n');
+    const prompt = `你是一個專業的旅遊助手。這個檔案是一份旅遊行程表或行程手冊，請把它整理成結構化資料。
+
+規則：
+1. 「國家」必須從下面這個清單裡挑一個最接近的，原文照抄、不要改寫：
+${countryLines}
+   如果行程跨越多個國家，挑停留最久的那一個。
+2. 用「第幾天」而不是日期：day 從 1 開始。只有在文件裡明確寫出西元日期時，才填 start_date（YYYY-MM-DD）；沒寫就留空字串。
+3. 每一天列出當天的活動。時間一律 24 小時制 HH:MM，而且分鐘只能是 00 或 30。
+4. 文件通常不會寫確切時間。這種情況請依照活動性質給合理的時間（早餐 08:00、Safari 一整天 08:00-17:00、晚餐 19:00 之類），同一天的活動不要重疊、依先後排序。
+5. **不要發明文件裡沒有的活動。** 寧可一天只有兩筆，也不要補滿。
+6. activity 用簡短的名稱（20 字內），細節放 note。note 可以留空。
+7. 住宿只有在文件明確提到旅館／營地名稱時才填。check_in_day / check_out_day 是第幾天（數字）。
+8. checklist 只收「出發前要自己準備或攜帶的東西」—— 轉接頭、藥品、衣物、簽證、要先預約的項目之類，一項一句、寫成待辦的口氣。
+   **不要**把「此行程不包含 X」「費用不含 Y」這種排除項寫進 checklist：那是報價範圍，不是你要準備的東西，放進來會讓清單變成一串不能勾掉的句子。同理，也不要收錄行程當天才發生的事（那些已經在 activities 裡）。沒有就給空陣列。
+9. 全部用繁體中文輸出，地名與旅館名可以保留原文。`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: { parts: [{ text: prompt }, { inlineData: { data: fileBase64, mimeType } }] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING, description: "行程名稱，20 字內" },
+            country: { type: Type.STRING, description: "必須原文照抄使用者提供的國家清單其中一項" },
+            start_date: { type: Type.STRING, description: "YYYY-MM-DD，文件沒寫就給空字串" },
+            day_count: { type: Type.NUMBER, description: "總天數" },
+            days: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  day: { type: Type.NUMBER, description: "第幾天，從 1 開始" },
+                  activities: {
+                    type: Type.ARRAY,
+                    items: {
+                      type: Type.OBJECT,
+                      properties: {
+                        activity: { type: Type.STRING },
+                        start_time: { type: Type.STRING, description: "HH:MM，分鐘只能是 00 或 30" },
+                        end_time: { type: Type.STRING, description: "HH:MM，分鐘只能是 00 或 30" },
+                        note: { type: Type.STRING },
+                      },
+                      required: ["activity", "start_time", "end_time"],
+                    },
+                  },
+                },
+                required: ["day", "activities"],
+              },
+            },
+            accommodations: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  name: { type: Type.STRING },
+                  address: { type: Type.STRING },
+                  check_in_day: { type: Type.NUMBER },
+                  check_out_day: { type: Type.NUMBER },
+                },
+                required: ["name", "check_in_day", "check_out_day"],
+              },
+            },
+            checklist: { type: Type.ARRAY, items: { type: Type.STRING } },
+          },
+          required: ["name", "country", "day_count", "days"],
+        },
+      },
+    });
+    return JSON.parse(response.text || "{}");
+  },
   async getItinerarySuggestion(trip: any, activities: any[], question: string) {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",

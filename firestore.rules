@@ -1,0 +1,109 @@
+rules_version = '2';
+
+// Every rule below rests on request.auth, and that is the whole point: until
+// 2026-09-21 this file did not exist and the console held
+// `allow read, write: if true` with a comment saying it was temporary. The
+// apiKey in src/services/firebase.ts ships inside the JS bundle, so that rule
+// meant anyone who opened the site could read, rewrite or delete every trip —
+// and the users collection, which then stored passwords in plain text.
+//
+// Rules live here, in the repo, for the same reason: a rule that exists only in
+// the console is a rule nobody reviews. It sat open for seven months.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // A role the client cannot assert about itself — it is read from the
+    // profile document, which the rules below forbid a client from promoting.
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Both field checks are guarded with `in` because legacy trips are not a
+    // uniform shape: trips/MibJyJpTU3YuNvcF3XSw (東京, created before the app
+    // set an owner) carries shared_with and NO owner_id at all. Reading an
+    // absent key in rules raises an error rather than yielding null, and an
+    // error denies — so the unguarded form would have rejected that trip even
+    // though its shared_with matched, and it would have looked like a rules
+    // typo rather than a missing field.
+    function mine(data) {
+      return signedIn()
+        && ((('owner_id' in data) && data.owner_id == request.auth.uid)
+            || (('shared_with' in data)
+                && data.shared_with is list
+                && request.auth.uid in data.shared_with));
+    }
+
+    // Profiles: uid -> { username, email, role }.
+    //
+    // Readable by any signed-in user because the buddy picker and 成員管理 list
+    // everyone by name. That is acceptable now and was not before: the password
+    // field is gone, so a profile holds a display name and an email address the
+    // person already shares with their travel companions.
+    match /users/{uid} {
+      allow read: if signedIn();
+
+      // Only your own profile, and only as 'user'. Self-promotion is the one
+      // hole that would make every other rule here decorative, so granting
+      // admin is deliberately a console-side act with no path through the app.
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'user';
+
+      // A user may rename themselves but not change their own role.
+      allow update: if isAdmin()
+        || (signedIn()
+            && request.auth.uid == uid
+            && request.resource.data.role == resource.data.role);
+
+      allow delete: if isAdmin();
+    }
+
+    // Trips: the owner, the people it is shared with, and admins.
+    //
+    // The app's two non-admin queries — where('owner_id','==',uid) and
+    // where('shared_with','array-contains',uid) — each satisfy one branch of
+    // mine(), which is what lets Firestore accept them as queries rather than
+    // rejecting the whole result set. Changing either query without changing
+    // this rule makes the trip list silently empty.
+    match /trips/{tripDoc} {
+      allow read: if isAdmin() || mine(resource.data);
+      allow create: if signedIn() && request.resource.data.owner_id == request.auth.uid;
+      allow update: if isAdmin() || mine(resource.data);
+      allow delete: if isAdmin()
+        || (signedIn()
+            && ('owner_id' in resource.data)
+            && resource.data.owner_id == request.auth.uid);
+    }
+
+    // Trip contents: signed-in only, with no per-trip ownership check.
+    //
+    // This is a known limit, not an oversight. Each of these rows points at its
+    // trip through a `trip_id` field, and for trips created before the 2026-05
+    // migration that value is the trip's own `id` FIELD — a UUID — rather than
+    // its Firestore document id. App code papers over the difference with
+    // `data.id || doc.id`; rules cannot, because get() needs a document path.
+    // So a per-trip get(/trips/$(resource.data.trip_id)) would silently deny
+    // every legacy row while appearing to work on new ones, which is worse than
+    // an honest boundary one level up.
+    //
+    // What this does and does not buy: the open internet is shut out entirely,
+    // which was the actual hole. Between the handful of people who can sign in,
+    // it is not a boundary — any of them could read another's activities by
+    // guessing a trip_id. Closing that means backfilling trip_id to document
+    // ids first, then tightening these four blocks.
+    match /activities/{doc}     { allow read, write: if signedIn(); }
+    match /expenses/{doc}       { allow read, write: if signedIn(); }
+    match /accommodations/{doc} { allow read, write: if signedIn(); }
+    match /checklist/{doc}      { allow read, write: if signedIn(); }
+
+    // Anything not named above stays closed. The old catch-all
+    // `match /{document=**}` is deliberately not reproduced.
+  }
+}

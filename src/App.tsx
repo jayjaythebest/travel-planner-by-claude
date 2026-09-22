@@ -22,13 +22,18 @@ import {
   Download,
   Share2,
   Users,
-  CalendarCheck
+  CalendarCheck,
+  FileUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, CURRENCY_MAP, COUNTRY_LIST, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, EXCHANGE_RATES, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, User } from './types';
 import { geminiService } from './services/geminiService';
-import { db } from './services/firebase';
+import { auth, db, googleProvider } from './services/firebase';
+import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import { Modal } from './components/Modal';
+import { ImportItineraryModal, type ImportDraft } from './components/ImportItineraryModal';
+import { DestinationPicker } from './components/DestinationPicker';
 import { syncTripToCalendar, CalendarError } from './services/googleCalendar';
 import { 
   collection,
@@ -39,6 +44,8 @@ import {
   deleteDoc,
   doc,
   updateDoc,
+  getDoc,
+  setDoc,
   getDocs,
   Timestamp
 } from 'firebase/firestore';
@@ -50,17 +57,6 @@ import { sourceHanSerifBold as notoSerifTCBold } from './assets/SourceHanSerif-B
 
 
 
-const EXCHANGE_RATES: Record<string, number> = {
-  'TWD': 1,
-  'USD': 32.5,
-  'JPY': 0.21,
-  'EUR': 35.2,
-  'KRW': 0.024,
-  'HKD': 4.15,
-  'GBP': 41.5,
-  'AUD': 21.2,
-  'THB': 0.9,
-};
 
 // ── Country-themed card helpers ──────────────────────────────────────────
 type CountryTheme = {
@@ -351,6 +347,9 @@ export default function App() {
   const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
   const [activeTab, setActiveTab] = useState<string>('');
   const [isAddingTrip, setIsAddingTrip] = useState(false);
+  const [isImportingItinerary, setIsImportingItinerary] = useState(false);
+  // Kept across opens on purpose: consecutive trips are usually to the same place.
+  const [newTripCountry, setNewTripCountry] = useState(COUNTRY_LIST[0]);
   const [isAddingActivity, setIsAddingActivity] = useState(false);
   const [isAddingFlight, setIsAddingFlight] = useState(false);
   const [isAddingAccommodation, setIsAddingAccommodation] = useState(false);
@@ -464,12 +463,52 @@ export default function App() {
     setActivityEndTime(addTwoHours(time));
   };
 
+  /**
+   * The only place currentUser is set. Firebase Auth owns the session now —
+   * it persists it itself, so nothing is kept in localStorage: a session there
+   * was a JSON blob anyone could edit, including the `role` field.
+   *
+   * The profile doc is what the app reads for username and role, because the
+   * Google account supplies neither. It is created on first sign-in with
+   * role 'user'; the rules forbid a client from granting itself 'admin', so
+   * promoting someone is deliberately a console-side act.
+   */
   useEffect(() => {
-    const savedUser = localStorage.getItem('travel_planner_user');
-    if (savedUser) {
-      setCurrentUser(JSON.parse(savedUser));
-      setIsLoginOpen(false);
-    }
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser) {
+        setCurrentUser(null);
+        setTrips([]);
+        setSelectedTrip(null);
+        setIsLoginOpen(true);
+        return;
+      }
+      try {
+        const profileRef = doc(db, "users", fbUser.uid);
+        const snap = await getDoc(profileRef);
+        if (snap.exists()) {
+          const data = snap.data() as { username?: string; email?: string; role?: 'admin' | 'user' };
+          setCurrentUser({
+            id: fbUser.uid,
+            username: data.username || fbUser.displayName || fbUser.email || '旅人',
+            email: data.email || fbUser.email || undefined,
+            role: data.role === 'admin' ? 'admin' : 'user',
+          });
+        } else {
+          const profile = {
+            username: fbUser.displayName || fbUser.email || '旅人',
+            email: fbUser.email || '',
+            role: 'user' as const,
+          };
+          await setDoc(profileRef, profile);
+          setCurrentUser({ id: fbUser.uid, ...profile });
+        }
+        setIsLoginOpen(false);
+      } catch (err) {
+        console.error(err);
+        setLoginError('讀取使用者資料失敗，請重新登入。');
+      }
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -482,74 +521,32 @@ export default function App() {
     }
   }, [currentUser]);
 
-  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const username = formData.get('username') as string;
-    const password = formData.get('password') as string;
-
-    setLoading(true);
+  const handleGoogleLogin = async () => {
     setLoginError('');
-
+    setLoading(true);
     try {
-      const q = query(collection(db, "users"), where("username", "==", username), where("password", "==", password));
-      const snapshot = await getDocs(q);
-      
-      if (snapshot.empty) {
-        // For the very first time, if no users exist, let the first login be admin
-        const allUsersSnap = await getDocs(collection(db, "users"));
-        if (allUsersSnap.empty && username === 'admin') {
-          const newUser = {
-            username,
-            password,
-            role: 'admin' as const
-          };
-          const docRef = await addDoc(collection(db, "users"), newUser);
-          const user = { ...newUser, id: docRef.id };
-          setCurrentUser(user);
-          localStorage.setItem('travel_planner_user', JSON.stringify(user));
-          setIsLoginOpen(false);
-        } else {
-          setLoginError('帳號或密碼錯誤');
-        }
-      } else {
-        const user = { ...snapshot.docs[0].data(), id: snapshot.docs[0].id } as User;
-        setCurrentUser(user);
-        localStorage.setItem('travel_planner_user', JSON.stringify(user));
-        setIsLoginOpen(false);
-      }
+      // onAuthStateChanged above does the rest; nothing to set here.
+      await signInWithPopup(auth, googleProvider);
     } catch (err) {
+      const code = (err as { code?: string }).code;
+      setLoginError(
+        code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
+          ? '登入視窗被關閉，尚未登入。'
+          : code === 'auth/popup-blocked'
+            ? '登入視窗被瀏覽器封鎖，請允許彈出式視窗後再試。'
+            : '登入失敗，請稍後再試。',
+      );
       console.error(err);
-      setLoginError('登入失敗，請稍後再試');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem('travel_planner_user');
-    setIsLoginOpen(true);
-    setSelectedTrip(null);
-  };
-
-  const handleAddUser = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const username = formData.get('username') as string;
-    const password = Math.random().toString(36).slice(-8); // Auto-generate password
-
+  const handleLogout = async () => {
     try {
-      await addDoc(collection(db, "users"), {
-        username,
-        password,
-        role: 'user'
-      });
-      alert(`使用者已建立！\n帳號：${username}\n密碼：${password}\n請務必告知使用者此密碼。`);
-      (e.target as HTMLFormElement).reset();
+      await signOut(auth);
     } catch (err) {
       console.error(err);
-      alert('建立失敗');
     }
   };
 
@@ -748,6 +745,21 @@ export default function App() {
         const combined = [...sharedTrips, ...ownedTrips];
         tripsList = Array.from(new Map(combined.map(item => [item.id, item])).values());
       }
+      // Newest first. Sorted here rather than at render because this is the
+      // one place the list is built — every caller (create, import, first
+      // load) goes through it, and the calendar sync only maps over what is
+      // already here.
+      tripsList.sort((a, b) => {
+        const byStart = (b.start_date || '').localeCompare(a.start_date || '');
+        if (byStart !== 0) return byStart;
+        // Same departure day: the one that ends later is the longer trip and
+        // reads as the more significant of the two.
+        const byEnd = (b.end_date || '').localeCompare(a.end_date || '');
+        if (byEnd !== 0) return byEnd;
+        // Never return 0 on distinct rows, or the order shuffles between
+        // renders on engines with an unstable sort for the remaining ties.
+        return (a.name || '').localeCompare(b.name || '');
+      });
       setTrips(tripsList);
     } catch (err) {
       console.error("Error fetching trips:", err);
@@ -762,7 +774,159 @@ export default function App() {
 
   
 
-    const handleSelectTrip = (trip: Trip) => {
+  
+
+  /**
+
+   * Write an approved import: one trip, then its activities, accommodations
+
+   * and checklist items.
+
+   *
+
+   * The draft carries day offsets rather than dates, because an itinerary
+
+   * document says "Day One". Day 1 lands on the date the user picked in the
+
+   * review step and everything else is derived, so moving a trip is a matter
+
+   * of re-importing with a different start date rather than editing N rows.
+
+   *
+
+   * trip_id is the new trip's DOCUMENT id and no `id` field is written, which
+
+   * matches handleCreateTrip. Legacy trips carry a UUID `id` that their
+
+   * activities point at instead, and that divergence is what stops Firestore
+
+   * rules from checking trip ownership on these collections (see
+
+   * firestore.rules) — new trips should not add to the pile.
+
+   *
+
+   * Throws rather than swallowing: the modal keeps the review open and says
+
+   * nothing was created, which is only honest if a failure really does reach
+
+   * it. A partially written trip is still possible if the network dies
+
+   * mid-loop; the trip list shows it and it can be deleted.
+
+   */
+
+  const handleImportItinerary = async (draft: ImportDraft) => {
+
+    if (!currentUser) throw new Error('not signed in');
+
+    const start = parseISO(draft.startDate);
+
+    const dateFor = (day: number) => format(addDays(start, day - 1), 'yyyy-MM-dd');
+
+
+
+    const tripRef = await addDoc(collection(db, "trips"), {
+
+      name: draft.name.trim(),
+
+      start_date: draft.startDate,
+
+      end_date: dateFor(Math.max(draft.dayCount, 1)),
+
+      country: draft.country,
+
+      owner_id: currentUser.id,
+
+      shared_with: [],
+
+    });
+
+    const tripId = tripRef.id;
+
+
+
+    for (const day of draft.days) {
+
+      for (const a of day.activities) {
+
+        await addDoc(collection(db, "activities"), {
+
+          id: crypto.randomUUID(),
+
+          trip_id: tripId,
+
+          date: dateFor(day.day),
+
+          start_time: a.start_time,
+
+          end_time: a.end_time,
+
+          activity: a.activity,
+
+          map_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(draft.country + ' ' + a.activity)}`,
+
+          note: a.note,
+
+          is_flight: false,
+
+          travel_mode: 'transit',
+
+        });
+
+      }
+
+    }
+
+
+
+    for (const acc of draft.accommodations) {
+
+      await addDoc(collection(db, "accommodations"), {
+
+        id: crypto.randomUUID(),
+
+        trip_id: tripId,
+
+        name: acc.name,
+
+        address: acc.address,
+
+        check_in: dateFor(acc.check_in_day),
+
+        check_out: dateFor(acc.check_out_day),
+
+        map_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(acc.name + ' ' + acc.address)}`,
+
+      });
+
+    }
+
+
+
+    for (const item of draft.checklist) {
+
+      await addDoc(collection(db, "checklist"), {
+
+        trip_id: tripId,
+
+        item,
+
+        is_checked: false,
+
+      });
+
+    }
+
+
+
+    await fetchTrips();
+
+  };
+
+
+
+  const handleSelectTrip = (trip: Trip) => {
     setSelectedTrip(trip);
     setActiveTab(trip.start_date);
   };
@@ -1511,6 +1675,13 @@ export default function App() {
               <Users size={18} /> 成員管理
             </button>
           )}
+          <button
+            onClick={() => setIsImportingItinerary(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-600 rounded-xl shadow-sm hover:bg-zinc-50 transition-colors text-sm font-bold"
+            title="從檔案匯入行程"
+          >
+            <FileUp size={18} /> 匯入行程
+          </button>
           <button 
             onClick={() => setIsAddingTrip(true)}
             className="flex items-center gap-2 px-3 py-2 bg-zinc-900 text-white rounded-xl shadow-sm hover:bg-zinc-800 transition-colors text-sm font-bold"
@@ -2232,8 +2403,15 @@ export default function App() {
     <div className="h-screen overflow-hidden bg-zinc-50 font-sans text-zinc-900">
       <AnimatePresence mode="wait">
         {!selectedTrip ? (
+          /* h-full is load-bearing, not styling. The list inside is
+              `h-full overflow-y-auto`, and height:100% resolves against the
+              PARENT's height — with this wrapper left at auto it resolved to
+              auto too, so the list grew past the viewport and the
+              `overflow-hidden` above simply clipped it. Nothing scrolled and
+              the trips below the fold were unreachable. */
           <motion.div 
             key="list"
+            className="h-full"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -2273,9 +2451,7 @@ export default function App() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-zinc-700 mb-1">國家</label>
-                <select name="country" className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
-                  {COUNTRY_LIST.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <DestinationPicker name="country" value={newTripCountry} onChange={setNewTripCountry} />
               </div>
               {currentUser?.role === 'admin' && allUsers.length > 0 && (
                 <div>
@@ -2295,6 +2471,13 @@ export default function App() {
           </Modal>
         )}
 
+        {isImportingItinerary && (
+          <ImportItineraryModal
+            onClose={() => setIsImportingItinerary(false)}
+            onConfirm={handleImportItinerary}
+          />
+        )}
+
         {isLoginOpen && (
           <div className="fixed inset-0 bg-zinc-50 z-[100] flex items-center justify-center p-4">
             <motion.div 
@@ -2310,33 +2493,22 @@ export default function App() {
                 <p className="text-sm text-zinc-400 mt-2">請登入以開始規劃您的旅程</p>
               </div>
 
-              <form onSubmit={handleLogin} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">帳號</label>
-                  <input 
-                    name="username" 
-                    required 
-                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none" 
-                    placeholder="請輸入帳號"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">密碼</label>
-                  <input 
-                    name="password" 
-                    type="password"
-                    required 
-                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none" 
-                    placeholder="請輸入密碼"
-                  />
-                </div>
-                {loginError && <p className="text-xs text-red-500 font-bold">{loginError}</p>}
-                <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg active:scale-[0.98] transition-all">
-                  登入
+              <div className="space-y-4">
+                {loginError && <p className="text-xs text-red-500 font-bold text-center">{loginError}</p>}
+                <button
+                  onClick={handleGoogleLogin}
+                  disabled={loading}
+                  className="w-full py-4 bg-white border border-zinc-200 text-zinc-800 rounded-xl font-bold shadow-sm active:scale-[0.98] transition-all flex items-center justify-center gap-3 disabled:opacity-50"
+                >
+                  {loading
+                    ? <Loader2 size={18} className="animate-spin" />
+                    : <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.8-.4-4H24v7.6h11.9c-.2 2-1.5 5-4.4 7l6.7 5.2c4-3.7 6.9-9.1 6.9-15.8z"/><path fill="#34A853" d="M24 46c6 0 11.1-2 14.8-5.4l-6.7-5.2c-1.9 1.3-4.5 2.2-8.1 2.2-6.2 0-11.5-4.1-13.4-9.8l-7 5.4C7.3 40.8 15 46 24 46z"/><path fill="#FBBC05" d="M10.6 27.8c-.5-1.4-.8-2.9-.8-4.5s.3-3.1.8-4.5l-7-5.4C2.6 16.5 2 20.1 2 23.3s.6 6.8 1.6 9.9l7-5.4z"/><path fill="#EA4335" d="M24 9.8c4.4 0 7.3 1.9 9 3.5l6.1-6C35.3 3.8 30 1.5 24 1.5 15 1.5 7.3 6.7 3.6 13.4l7 5.4C12.5 13.9 17.8 9.8 24 9.8z"/></svg>}
+                  使用 Google 登入
                 </button>
-              </form>
+              </div>
               <p className="text-[10px] text-zinc-400 text-center mt-6">
-                提示：若是首次登入，請輸入 admin 作為帳號以建立管理員權限。
+                第一次登入會自動建立帳號。行程的讀寫權限由 Firestore 規則依你的
+                Google 帳號判定，所以登入是必要的，不只是為了記住你是誰。
               </p>
             </motion.div>
           </div>
@@ -2347,18 +2519,11 @@ export default function App() {
         {isUserManagementOpen && (
           <Modal title="使用者管理" onClose={() => setIsUserManagementOpen(false)}>
             <div className="space-y-6">
-              <form onSubmit={handleAddUser} className="space-y-3">
-                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">新增使用者</h4>
-                <div className="flex gap-2">
-                  <input 
-                    name="username" 
-                    required 
-                    className="flex-1 p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none text-sm" 
-                    placeholder="使用者名稱"
-                  />
-                  <button type="submit" className="px-6 bg-zinc-900 text-white rounded-xl font-bold text-sm">新增</button>
-                </div>
-              </form>
+              <p className="text-xs text-zinc-500 leading-relaxed bg-zinc-50 border border-zinc-100 rounded-xl p-3">
+                成員無法從這裡新增 —— 每個人自己用 Google 登入一次就會出現在下面的清單裡，
+                之後才能被加進行程的旅伴。權限一律是「user」，要升成 admin 只能在 Firebase
+                console 改，這是規則本身擋的，不是介面沒做。
+              </p>
 
               <div className="space-y-3">
                 <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">現有使用者</h4>
@@ -2367,7 +2532,7 @@ export default function App() {
                     <div key={user.id} className="flex items-center justify-between p-3 bg-zinc-50 border border-zinc-100 rounded-xl">
                       <div>
                         <div className="text-sm font-bold text-zinc-800">{user.username}</div>
-                        <div className="text-[10px] text-zinc-400">密碼：{user.password} · 權限：{user.role}</div>
+                        <div className="text-[10px] text-zinc-400">{user.email || '—'} · 權限：{user.role}</div>
                       </div>
                       {user.role !== 'admin' && (
                         <button onClick={() => handleDeleteUser(user.id)} className="p-2 text-zinc-300 hover:text-red-500 transition-colors">
@@ -2850,7 +3015,7 @@ export default function App() {
                     onChange={(e) => setExpenseForm({...expenseForm, currency: e.target.value})}
                     className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   >
-                    {Object.values(CURRENCY_MAP).map(c => <option key={c} value={c}>{c}</option>)}
+                    {CURRENCY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
                     <option value="TWD">TWD</option>
                   </select>
                 </div>
@@ -3178,32 +3343,4 @@ export default function App() {
   );
 
 
-}
-
-function Modal({ title, children, onClose }: { title: string, children: React.ReactNode, onClose: () => void }) {
-  return (
-    <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-zinc-900/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
-    >
-      <motion.div
-        initial={{ y: '100%' }}
-        animate={{ y: 0 }}
-        exit={{ y: '100%' }}
-        className="bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] shadow-2xl"
-      >
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-lg font-bold text-zinc-900">{title}</h3>
-          <button onClick={onClose} className="p-2 hover:bg-zinc-100 rounded-full transition-colors text-zinc-400">
-            <X size={20} />
-          </button>
-        </div>
-        <div className="max-h-[80vh] overflow-y-auto no-scrollbar">
-          {children}
-        </div>
-      </motion.div>
-    </motion.div>
-  );
 }

@@ -25,9 +25,10 @@ export interface Trip {
 }
 
 export interface User {
+  /** The Firebase Auth uid. Also the id of this user's `users/{uid}` profile. */
   id: string;
   username: string;
-  password: string;
+  email?: string;
   role: 'admin' | 'user';
 }
 

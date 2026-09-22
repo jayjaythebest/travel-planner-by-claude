@@ -1,6 +1,7 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
@@ -19,4 +20,11 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-export { db };
+// Firestore security rules can only test `request.auth`, so real sign-in is
+// what makes them enforceable at all. Before this existed the rules had to be
+// `allow read, write: if true` for the app to work, which meant anyone holding
+// the apiKey above — it ships in the bundle — could read and delete everything.
+const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
+
+export { db, auth, googleProvider };
