@@ -45,6 +45,17 @@ export interface Activity {
   ai_advice?: string;
   travel_time_to_next?: string;
   photo_url?: string;
+  /**
+   * Time zones for this one activity, overriding the trip country's.
+   *
+   * Exists for flights. Everything else in a trip happens at the destination,
+   * but an outbound flight departs from home: 09:55 on a Taipei→Aomori leg is
+   * 09:55 in Taipei, and stamping it Asia/Tokyo — which is what the trip's
+   * single `country` field says — puts it on the calendar an hour early.
+   * Absent means "use the trip's zone", which is right for every non-flight.
+   */
+  start_tz?: string;
+  end_tz?: string;
 }
 
 export interface Accommodation {

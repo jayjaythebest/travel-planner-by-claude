@@ -40,9 +40,11 @@ export const geminiService = {
           properties: {
             flightNo: { type: Type.STRING },
             departureAirport: { type: Type.STRING },
-            departureTime: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30" },
+            departureTime: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30. Local time AT THE DEPARTURE AIRPORT, exactly as printed on the ticket - do not convert it." },
+            departureTimeZone: { type: Type.STRING, description: "IANA time zone of the DEPARTURE airport, e.g. Asia/Taipei. Must be a real IANA name, never an abbreviation like JST." },
             arrivalAirport: { type: Type.STRING },
-            arrivalTime: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30" },
+            arrivalTime: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30. Local time AT THE ARRIVAL airport, exactly as printed - do not convert it." },
+            arrivalTimeZone: { type: Type.STRING, description: "IANA time zone of the ARRIVAL airport, e.g. Asia/Tokyo. Must be a real IANA name, never an abbreviation like JST." },
             date: { type: Type.STRING, description: "YYYY-MM-DD" },
           },
           required: ["flightNo", "departureAirport", "departureTime", "arrivalAirport", "arrivalTime", "date"],

@@ -12,7 +12,7 @@
 
 import { addDays, format, parseISO } from 'date-fns';
 import type { Activity, Trip } from '../types';
-import { TIMEZONE_MAP } from '../utils';
+import { isValidTimeZone, TIMEZONE_MAP } from '../utils';
 
 const SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
@@ -198,9 +198,16 @@ function addHours(time: string, hours: number): { time: string; nextDay: boolean
  * country's zone explicitly. Leaving timeZone off would make Google read the
  * naive time in the *viewer's* zone and put a Japan morning in the middle of
  * the night at home.
+ *
+ * Flights are the exception at both ends: an outbound leg departs from home,
+ * so start and end carry their own zones when the activity has them.
  */
 function buildEvent(activity: Activity, trip: Trip): GoogleEvent {
-  const timeZone = TIMEZONE_MAP[trip.country] ?? 'Asia/Taipei';
+  const tripZone = TIMEZONE_MAP[trip.country] ?? 'Asia/Taipei';
+  // Per-activity zones exist for flights, whose two ends are in different
+  // places; everything else happens at the destination and inherits the trip's.
+  const startZone = isValidTimeZone(activity.start_tz) ? activity.start_tz : tripZone;
+  const endZone = isValidTimeZone(activity.end_tz) ? activity.end_tz : tripZone;
   const description = [activity.note?.trim(), activity.map_url?.trim()]
     .filter(Boolean)
     .join('\n\n');
@@ -235,6 +242,12 @@ function buildEvent(activity: Activity, trip: Trip): GoogleEvent {
     if (activity.is_flight && TIME_RE.test(endTime ?? '')) {
       // An arrival earlier than departure is an overnight flight, which is the
       // normal shape of the long-haul legs this app is used for.
+      //
+      // This compares two wall clocks that may now be in different zones, which
+      // only decides the day correctly while the flight does not cross the date
+      // line. It holds for everything in COUNTRY_LIST reached from Taipei; a
+      // US return landing the next calendar day is the case it gets wrong, and
+      // fixing that needs real instants, not a comparison of naive strings.
       endDate = format(addDays(parseISO(activity.date), 1), 'yyyy-MM-dd');
     } else {
       // Same +2h the activity form defaults to, so a synced event matches what
@@ -247,8 +260,8 @@ function buildEvent(activity: Activity, trip: Trip): GoogleEvent {
 
   return {
     ...base,
-    start: { dateTime: `${activity.date}T${activity.start_time}:00`, timeZone },
-    end: { dateTime: `${endDate}T${endTime}:00`, timeZone },
+    start: { dateTime: `${activity.date}T${activity.start_time}:00`, timeZone: startZone },
+    end: { dateTime: `${endDate}T${endTime}:00`, timeZone: endZone },
   };
 }
 

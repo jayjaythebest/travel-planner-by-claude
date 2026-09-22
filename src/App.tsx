@@ -25,7 +25,7 @@ import {
   CalendarCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, CURRENCY_MAP, COUNTRY_LIST } from './utils';
+import { cn, CURRENCY_MAP, COUNTRY_LIST, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, User } from './types';
 import { geminiService } from './services/geminiService';
 import { db } from './services/firebase';
@@ -372,7 +372,11 @@ export default function App() {
     arrivalAirport: '',
     departureTime: '',
     arrivalTime: '',
-    date: ''
+    date: '',
+    // Empty means "the trip's zone". Resolved at submit rather than defaulted
+    // here, because this state is created before a trip is ever selected.
+    departureTimeZone: '',
+    arrivalTimeZone: ''
   });
 
   const [accommodationForm, setAccommodationForm] = useState({
@@ -848,12 +852,21 @@ export default function App() {
     
     const { flightNo, date, departureTime, arrivalTime, arrivalAirport, departureAirport } = flightForm;
 
+    // Only stored when they differ from the trip's own zone: an all-Japan
+    // domestic leg on a Japan trip needs no override, and writing one would be
+    // a second copy of the same fact to keep in step.
+    const tripZone = TIMEZONE_MAP[selectedTrip.country] ?? 'Asia/Taipei';
+    const departureZone = flightForm.departureTimeZone || tripZone;
+    const arrivalZone = flightForm.arrivalTimeZone || tripZone;
+
     const newActivity = {
       id: crypto.randomUUID(),
       trip_id: selectedTrip.id,
       date,
       start_time: departureTime,
       end_time: arrivalTime,
+      ...(departureZone !== tripZone ? { start_tz: departureZone } : {}),
+      ...(arrivalZone !== tripZone ? { end_tz: arrivalZone } : {}),
       activity: `✈️ 航班: ${flightNo} (${departureAirport} 🛫 ${arrivalAirport})`,
       map_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(arrivalAirport)}`,
       note: `自動生成航班行程`,
@@ -864,7 +877,7 @@ export default function App() {
     try {
             await addDoc(collection(db, "activities"), newActivity);
       setIsAddingFlight(false);
-      setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '' });
+      setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '', departureTimeZone: '', arrivalTimeZone: '' });
     } catch (err) {
       console.error(err);
     }
@@ -1025,7 +1038,12 @@ export default function App() {
           arrivalAirport: res.arrivalAirport || '',
           departureTime: res.departureTime || '',
           arrivalTime: res.arrivalTime || '',
-          date: res.date || getDateRange()[0]
+          date: res.date || getDateRange()[0],
+          // A model asked for an IANA name can answer 'JST' or invent one, and
+          // an unknown zone makes the Calendar API reject the whole event. Drop
+          // anything this browser does not recognise and fall back to the trip.
+          departureTimeZone: isValidTimeZone(res.departureTimeZone) ? res.departureTimeZone : '',
+          arrivalTimeZone: isValidTimeZone(res.arrivalTimeZone) ? res.arrivalTimeZone : ''
         });
       } catch (err) {
         console.error(err);
@@ -2516,7 +2534,7 @@ export default function App() {
         {isAddingFlight && (
           <Modal title="新增航班" onClose={() => {
             setIsAddingFlight(false);
-            setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '' });
+            setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '', departureTimeZone: '', arrivalTimeZone: '' });
             setShowAiInput(false);
             setAiInputText('');
           }}>
@@ -2553,6 +2571,8 @@ export default function App() {
                           flightNo: res.flightNo || '',
                           departureAirport: res.departureAirport || '',
                           arrivalAirport: res.arrivalAirport || '',
+                          departureTimeZone: isValidTimeZone(res.departureTimeZone) ? res.departureTimeZone : '',
+                          arrivalTimeZone: isValidTimeZone(res.arrivalTimeZone) ? res.arrivalTimeZone : '',
                           departureTime: res.departureTime || '',
                           arrivalTime: res.arrivalTime || '',
                           date: res.date || getDateRange()[0]
@@ -2619,6 +2639,29 @@ export default function App() {
                   />
                 </div>
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">出發時區</label>
+                  <select
+                    value={flightForm.departureTimeZone || (selectedTrip ? (TIMEZONE_MAP[selectedTrip.country] ?? 'Asia/Taipei') : 'Asia/Taipei')}
+                    onChange={(e) => setFlightForm({...flightForm, departureTimeZone: e.target.value})}
+                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
+                  >
+                    {TIME_ZONE_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">抵達時區</label>
+                  <select
+                    value={flightForm.arrivalTimeZone || (selectedTrip ? (TIMEZONE_MAP[selectedTrip.country] ?? 'Asia/Taipei') : 'Asia/Taipei')}
+                    onChange={(e) => setFlightForm({...flightForm, arrivalTimeZone: e.target.value})}
+                    className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
+                  >
+                    {TIME_ZONE_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <p className="text-xs text-zinc-400 -mt-2">起飛與抵達時間各自填當地時間，就是機票上印的那個。</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-bold text-zinc-600 mb-1">起飛時間</label>
