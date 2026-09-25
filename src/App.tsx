@@ -47,6 +47,7 @@ import {
   getDoc,
   setDoc,
   getDocs,
+  writeBatch,
   Timestamp
 } from 'firebase/firestore';
 import { format, addDays, differenceInDays, parseISO } from 'date-fns';
@@ -422,6 +423,8 @@ export default function App() {
   const [dailyNeedSuggestion, setDailyNeedSuggestion] = useState<Record<string, string>>({}); // keyed by date
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isSyncingCalendar, setIsSyncingCalendar] = useState(false);
+  // Holds the id of the trip being deleted, so only that card shows a spinner.
+  const [deletingTripId, setDeletingTripId] = useState<string | null>(null);
   const [calendarMessage, setCalendarMessage] = useState('');
 
   // Multi-user states
@@ -1554,17 +1557,92 @@ export default function App() {
     }
   };
 
+  /**
+   * Collections whose rows belong to a trip and must go with it.
+   *
+   * They are joined by a `trip_id` FIELD rather than being subcollections, so
+   * deleting the trip document leaves them behind — reachable by nothing,
+   * visible in no screen, and counted by no total. Before 2026-09-22 that is
+   * exactly what happened on every delete.
+   */
+  const TRIP_CHILD_COLLECTIONS = ['activities', 'accommodations', 'expenses', 'checklist'] as const;
+
+  /**
+   * Delete a trip and everything hanging off it.
+   *
+   * Children go FIRST and the trip document last. The other order is the one
+   * that cannot be recovered from: if the run dies half way, the trip is gone
+   * and its remaining rows point at an id that no longer resolves, so nothing
+   * in the app can ever find or remove them. This way a failure leaves the
+   * trip in the list, short a few rows, and pressing delete again finishes it.
+   *
+   * The query is on `trip.id`, not the document id: legacy trips carry their
+   * own UUID `id` field and their children reference that, which is the same
+   * divergence that stops firestore.rules checking ownership on these
+   * collections. `trip.id` is already `data.id || doc.id` from fetchTrips, so
+   * it is the one value both shapes agree on.
+   */
   const handleDeleteTrip = async (e: React.MouseEvent, trip: Trip) => {
     e.stopPropagation();
-    if (!confirm('確定要刪除整趟旅程嗎？此動作無法復原。')) return;
+    if (deletingTripId) return;
+
     try {
+      setDeletingTripId(trip.id);
+
+      // Counted before asking, because 「確定要刪除整趟旅程嗎」 does not tell
+      // anyone what they are about to lose.
+      const snapshots = await Promise.all(
+        TRIP_CHILD_COLLECTIONS.map(name =>
+          getDocs(query(collection(db, name), where('trip_id', '==', trip.id))),
+        ),
+      );
+      const labels = ['活動', '住宿', '支出', '清單項目'];
+      const parts = snapshots
+        .map((snap, i) => (snap.size > 0 ? `${snap.size} 筆${labels[i]}` : ''))
+        .filter(Boolean);
+      const gcalCount = Object.keys(trip.gcal?.events ?? {}).length;
+
+      const message = [
+        `確定要刪除「${trip.name}」嗎？`,
+        parts.length > 0 ? `將一併刪除 ${parts.join('、')}。` : '這趟底下沒有其他資料。',
+        // The calendar is not ours to clean up here: removing those events
+        // needs a Google authorization popup, and springing one on someone
+        // mid-delete is worse than telling them it did not happen.
+        gcalCount > 0
+          ? `
+注意：Google Calendar 上那 ${gcalCount} 筆事件不會被移除，要自己去日曆刪。`
+          : '',
+        `
+此動作無法復原。`,
+      ]
+        .filter(Boolean)
+        .join('');
+
+      if (!confirm(message)) return;
+
+      for (const snap of snapshots) {
+        // Firestore caps a batch at 500 writes. A 20-day trip stays well under
+        // that, but the chunking is what stops the cap turning into a partial
+        // delete the day someone imports a long itinerary.
+        const docs = snap.docs;
+        for (let start = 0; start < docs.length; start += 450) {
+          const batch = writeBatch(db);
+          for (const d of docs.slice(start, start + 450)) batch.delete(d.ref);
+          await batch.commit();
+        }
+      }
+
       await deleteDoc(doc(db, "trips", trip.documentId || trip.id));
+
       fetchTrips();
       if (selectedTrip?.id === trip.id) {
         setSelectedTrip(null);
       }
     } catch (err) {
       console.error(err);
+      alert('刪除失敗。這趟旅程還在，可以再試一次。');
+    } finally {
+      setDeletingTripId(null);
     }
   };
 
@@ -1734,10 +1812,13 @@ export default function App() {
                     </button>
                     <button
                       onClick={(e) => handleDeleteTrip(e, trip)}
-                      className="p-1.5 text-zinc-300 hover:text-red-500 transition-colors"
+                      disabled={deletingTripId !== null}
+                      className="p-1.5 text-zinc-300 hover:text-red-500 transition-colors disabled:opacity-40"
                       title="刪除旅程"
                     >
-                      <Trash2 size={14} />
+                      {deletingTripId === trip.id
+                        ? <Loader2 size={14} className="animate-spin" />
+                        : <Trash2 size={14} />}
                     </button>
                   </div>
                 )}
