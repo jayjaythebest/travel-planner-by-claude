@@ -102,6 +102,7 @@ service cloud.firestore {
     match /expenses/{doc}       { allow read, write: if signedIn(); }
     match /accommodations/{doc} { allow read, write: if signedIn(); }
     match /checklist/{doc}      { allow read, write: if signedIn(); }
+    match /ideas/{doc}          { allow read, write: if signedIn(); }
 
     // Anything not named above stays closed. The old catch-all
     // `match /{document=**}` is deliberately not reproduced.

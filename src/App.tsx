@@ -23,17 +23,19 @@ import {
   Share2,
   Users,
   CalendarCheck,
-  FileUp
+  FileUp,
+  LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, EXCHANGE_RATES, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
-import { Trip, Activity, Expense, Accommodation, ChecklistItem, User } from './types';
+import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
 import { Modal } from './components/Modal';
 import { ImportItineraryModal, type ImportDraft } from './components/ImportItineraryModal';
 import { DestinationPicker } from './components/DestinationPicker';
+import { TripOverview } from './components/TripOverview';
 import { syncTripToCalendar, CalendarError } from './services/googleCalendar';
 import { 
   collection,
@@ -339,12 +341,24 @@ function getTripStatus(startDate: string, endDate: string): { label: string; col
   return { label: '已完成', color: 'text-zinc-400' };
 }
 
+/**
+ * The value `activeTab` takes for the overview, which is not a day.
+ *
+ * A sentinel rather than a separate piece of state so that exactly one thing
+ * decides what the content area shows. It is deliberately not a date string:
+ * every `activeTab` consumer below either compares it to a real date (and so
+ * fails closed) or is guarded, and a value that could never be a date makes
+ * the two cases impossible to confuse.
+ */
+const OVERVIEW_TAB = 'overview';
+
 export default function App() {
   const [trips, setTrips] = useState<Trip[]>([]);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [ideas, setIdeas] = useState<Idea[]>([]);
   const [accommodations, setAccommodations] = useState<Accommodation[]>([]);
   const [activeTab, setActiveTab] = useState<string>('');
   const [isAddingTrip, setIsAddingTrip] = useState(false);
@@ -673,6 +687,7 @@ export default function App() {
     const expensesQuery = query(collection(db, "expenses"), where("trip_id", "==", selectedTrip.id));
     const accommodationsQuery = query(collection(db, "accommodations"), where("trip_id", "==", selectedTrip.id));
     const checklistQuery = query(collection(db, "checklist"), where("trip_id", "==", selectedTrip.id));
+    const ideasQuery = query(collection(db, "ideas"), where("trip_id", "==", selectedTrip.id));
 
     const unsubActivities = onSnapshot(activitiesQuery, (snapshot) => {
       const activitiesData = snapshot.docs.map(doc => {
@@ -706,11 +721,20 @@ export default function App() {
       setChecklist(checklistData);
     });
 
+    const unsubIdeas = onSnapshot(ideasQuery, (snapshot) => {
+      const ideasData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as Idea[];
+      // Oldest first, so the stash reads in the order the group thought of
+      // things rather than reshuffling every time someone adds one.
+      ideasData.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+      setIdeas(ideasData);
+    });
+
     return () => {
       unsubActivities();
       unsubExpenses();
       unsubAccommodations();
       unsubChecklist();
+      unsubIdeas();
     };
   }, [selectedTrip]);
 
@@ -931,7 +955,7 @@ export default function App() {
 
   const handleSelectTrip = (trip: Trip) => {
     setSelectedTrip(trip);
-    setActiveTab(trip.start_date);
+    setActiveTab(OVERVIEW_TAB);
   };
 
   const handleCreateTrip = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -1864,7 +1888,11 @@ export default function App() {
     const currentActivities = activities
       .filter(a => a.date === activeTab)
       .sort((a, b) => a.start_time.localeCompare(b.start_time));
-    const currentAccommodations = accommodations.filter(acc => {
+    const isOverview = activeTab === OVERVIEW_TAB;
+    // parseISO(OVERVIEW_TAB) is an Invalid Date and every comparison against
+    // it is false, so this would quietly return [] anyway — but only by
+    // accident. The guard says so out loud.
+    const currentAccommodations = isOverview ? [] : accommodations.filter(acc => {
       const checkIn = parseISO(acc.check_in);
       const checkOut = parseISO(acc.check_out);
       const current = parseISO(activeTab);
@@ -1961,6 +1989,20 @@ export default function App() {
 
           {/* Date Tabs */}
           <div className="flex gap-2 overflow-x-auto px-4 pb-2.5 no-scrollbar">
+            <button
+              onClick={() => setActiveTab(OVERVIEW_TAB)}
+              className={cn(
+                "px-3.5 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition-all border flex-shrink-0 flex items-center gap-1.5",
+                activeTab === OVERVIEW_TAB
+                  ? "bg-zinc-900 text-white border-zinc-900 shadow-sm"
+                  : "bg-white text-zinc-500 border-zinc-200"
+              )}
+            >
+              <LayoutGrid size={11} /> 總覽
+            </button>
+            {/* The divider keeps 總覽 from reading as "Day 0" — it is a
+                different kind of thing, not the day before the first one. */}
+            <div className="w-px bg-zinc-200 my-1 flex-shrink-0" />
             {dates.map((date, i) => (
               <button
                 key={date}
@@ -1984,6 +2026,23 @@ export default function App() {
           onScroll={e => setHeaderCollapsed(e.currentTarget.scrollTop > 55)}
         >
 
+          {isOverview ? (
+            <TripOverview
+              trip={selectedTrip}
+              dates={dates}
+              activities={activities}
+              accommodations={accommodations}
+              expenses={expenses}
+              checklist={checklist}
+              ideas={ideas}
+              currentUser={currentUser}
+              onJumpToDay={setActiveTab}
+              onOpenExpenses={() => { setShowTotalExpense(true); setIsExpenseAnalysisOpen(true); }}
+              onAddAccommodation={() => setIsAddingAccommodation(true)}
+              onAddFlight={() => setIsAddingFlight(true)}
+            />
+          ) : (
+          <>
 
           {/* ── Per-day: Hotel check-in / check-out ── */}
           {(() => {
@@ -2426,6 +2485,9 @@ export default function App() {
               </div>
             )}
           </div>
+
+          </>
+          )}
         </div>
 
         {/* ── FAB ── */}
@@ -2722,7 +2784,7 @@ export default function App() {
             <form name="activityForm" onSubmit={handleAddActivity} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-zinc-700 mb-1">日期</label>
-                <select name="date" defaultValue={activeTab || getDateRange()[0]} className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
+                <select name="date" defaultValue={getDateRange().includes(activeTab) ? activeTab : getDateRange()[0]} className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
                   {getDateRange().map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>

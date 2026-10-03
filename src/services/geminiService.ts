@@ -374,6 +374,139 @@ ${countryLines}
     });
     return JSON.parse(response.text || "{}");
   },
+  /**
+   * Pull candidate places out of whatever someone pasted in.
+   *
+   * The input is a blog post, a listicle, a Google Maps share, a friend's
+   * message — prose that mentions places rather than a list of them. Nothing
+   * here writes to Firestore: the caller shows the candidates for review,
+   * because a travel article names a dozen places it is not recommending
+   * (the one the author skipped, the station they changed at) and only a
+   * person can tell those apart.
+   */
+  async extractIdeasFromText(text: string, country: string, existingTitles: string[] = []) {
+    const already = existingTitles.length > 0
+      ? `\n\n收藏區裡已經有這些地點，重複的請不要再列出來：\n${existingTitles.map(t => '- ' + t).join('\n')}`
+      : '';
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `你是一個熟悉 ${country} 的旅遊達人。以下是使用者從網站、部落格或朋友訊息複製來的文字，請從中挑出「值得去的具體地點」。
+
+規則：
+1. 只收**具體的地點**（店名、景點名、設施名）。不要收城市名、區域名、交通方式、或「可以逛逛街」這種沒有指名的描述。
+2. 地點名稱保留當地原文（日文漢字、英文店名照抄），不要翻譯成中文。
+3. 文章提到但**作者沒有推薦**的（例如「這家我們沒去」「只是轉車經過」），不要收。
+4. note 用繁體中文寫一句話，說明為什麼值得去 —— 從原文擷取重點，不要自己編造原文沒有的賣點。
+5. duration 給一個合理的停留時間估計（例如「30 分鐘」「1-2 小時」「半天」）。
+6. area 填所在區域或最近的車站；原文沒寫就依你的知識補，不確定就留空字串。
+7. 最多 15 個。寧可少，不要硬湊。${already}
+
+以下是文字內容：
+"""
+${text.slice(0, 20000)}
+"""`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            ideas: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  title: { type: Type.STRING, description: "地點名稱，保留原文" },
+                  category: { type: Type.STRING, description: "restaurant | cafe | landmark | shopping | other" },
+                  area: { type: Type.STRING, description: "區域或最近車站；不確定就空字串" },
+                  note: { type: Type.STRING, description: "一句話說明為何值得去，繁體中文，30 字內" },
+                  duration: { type: Type.STRING, description: "建議停留時間，例如 1-2 小時" },
+                },
+                required: ["title", "category", "note"],
+              },
+            },
+          },
+          required: ["ideas"],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{"ideas":[]}');
+    return Array.isArray(parsed.ideas) ? parsed.ideas : [];
+  },
+
+  /**
+   * Suggest which day each stashed idea belongs on.
+   *
+   * Returns one entry per idea it has an opinion about — fewer than were sent
+   * is a valid answer, and an idea it cannot place is more honest than a day
+   * picked to fill the table.
+   *
+   * `ref` is the 1-based position in the list that was sent, and the caller
+   * maps it back by index. An earlier version asked the model to echo the
+   * title verbatim and matched on that; it answered
+   * `Bar Casa Dani（Mercado de la Paz）` — the title plus the area, because
+   * that is how the list below renders each line — and every suggestion was
+   * silently dropped as unmatched. A number has no formatting for the model to
+   * helpfully improve on.
+   */
+  async getStashSuggestions(
+    trip: { country: string; start_date: string; end_date: string },
+    dayPlans: { date: string; day: number; activities: string[] }[],
+    ideas: { title: string; area?: string; category: string; duration?: string }[],
+  ) {
+    const schedule = dayPlans
+      .map(d => `Day ${d.day}（${d.date}）：${d.activities.length > 0 ? d.activities.join('、') : '目前空白'}`)
+      .join('\n');
+    const stash = ideas
+      .map((i, n) => `${n + 1}. ${i.title}${i.area ? `（${i.area}）` : ''}${i.duration ? ` · 約 ${i.duration}` : ''}`)
+      .join('\n');
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `你是一個專業的旅遊規劃師。使用者在 ${trip.country} 的旅程是 ${trip.start_date} 到 ${trip.end_date}。
+
+目前每天的行程：
+${schedule}
+
+使用者收藏了以下還沒安排的地點：
+${stash}
+
+請判斷每個收藏地點最適合塞進哪一天，依據是：地理位置跟那天其他行程順不順路、那天時間鬆不鬆、以及這類地點適合的時段（餐廳對用餐時間、景點對白天、夜景對晚上）。
+
+規則：
+1. ref 填上面清單的**編號數字**（1、2、3…），不要填地點名稱。
+2. 真的找不到合適的日子就不要列入，列得少沒關係。
+3. 同一天不要塞超過兩個新地點。
+4. reason 用繁體中文，35 字以內，要講出具體理由（順路、那天空、時段合適），不要講空話。`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            suggestions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  ref: { type: Type.NUMBER, description: "收藏清單的編號，從 1 開始" },
+                  date: { type: Type.STRING, description: "YYYY-MM-DD，必須落在旅程日期範圍內" },
+                  suggestedTime: { type: Type.STRING, description: "建議時間 HH:MM" },
+                  reason: { type: Type.STRING, description: "繁體中文，35 字內" },
+                },
+                required: ["ref", "date", "reason"],
+              },
+            },
+          },
+          required: ["suggestions"],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{"suggestions":[]}');
+    return Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
+  },
+
   async getItinerarySuggestion(trip: any, activities: any[], question: string) {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",

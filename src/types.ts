@@ -85,3 +85,38 @@ export interface ChecklistItem {
   item: string;
   is_checked: boolean;
 }
+
+/**
+ * A place someone wants to go but has not scheduled yet.
+ *
+ * The stash exists because planning a trip with other people happens in the
+ * wrong order: links and screenshots arrive weeks before anyone knows which
+ * day they are free. An Idea is deliberately NOT an Activity with a null date
+ * — an Activity without a date would leak into every day-filtered view, the
+ * PDF and the calendar sync, all of which assume `date` is real.
+ *
+ * `status` is kept rather than deleting a scheduled idea, because the stash is
+ * shared: a friend who proposed somewhere should be able to see it landed
+ * rather than find it gone.
+ */
+export interface Idea {
+  id: string;
+  trip_id: string;
+  title: string;
+  category: 'restaurant' | 'cafe' | 'landmark' | 'shopping' | 'other';
+  /** Neighbourhood or nearest station, as free text. */
+  area?: string;
+  /** Why it is worth going — the one line that survives from the source. */
+  note?: string;
+  /** Rough visit length, e.g. "1-2 小時". Shown so a day can be packed sanely. */
+  duration?: string;
+  map_url?: string;
+  /** Where it came from: a URL, or 手動 for a typed one. */
+  source?: string;
+  /** Display name of whoever added it, so a shared stash reads as a conversation. */
+  created_by: string;
+  created_at: string;
+  status: 'idea' | 'scheduled';
+  /** Set when status flips to scheduled; the day it was placed on. */
+  scheduled_date?: string;
+}
