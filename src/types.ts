@@ -103,7 +103,7 @@ export interface Idea {
   id: string;
   trip_id: string;
   title: string;
-  category: 'restaurant' | 'cafe' | 'landmark' | 'shopping' | 'other';
+  category: 'restaurant' | 'cafe' | 'landmark' | 'shopping' | 'stay' | 'other';
   /** Neighbourhood or nearest station, as free text. */
   area?: string;
   /** Why it is worth going — the one line that survives from the source. */
@@ -119,4 +119,22 @@ export interface Idea {
   status: 'idea' | 'scheduled';
   /** Set when status flips to scheduled; the day it was placed on. */
   scheduled_date?: string;
+}
+
+/**
+ * A photo attached to an Idea, stored as a compressed JPEG data URL.
+ *
+ * Firestore rather than Storage because the project has no Storage bucket and
+ * no billing account, and Storage on a *.firebasestorage.app bucket requires
+ * the Blaze plan. One document per photo, in its own collection, so a single
+ * document stays well under Firestore's 1 MiB cap and the ideas listener does
+ * not drag image bytes along with every title edit.
+ */
+export interface IdeaPhoto {
+  id: string;
+  trip_id: string;
+  idea_id: string;
+  data_url: string;
+  created_by: string;
+  created_at: string;
 }

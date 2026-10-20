@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Sparkles,
   Plus,
@@ -10,20 +10,23 @@ import {
   CalendarPlus,
   ChevronDown,
   Lightbulb,
+  ImagePlus,
+  X,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
-import { collection, addDoc, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { geminiService } from '../services/geminiService';
 import { cn } from '../utils';
-import { Trip, Activity, Idea, User } from '../types';
+import { Trip, Activity, Idea, IdeaPhoto, User } from '../types';
 
 const CATEGORY_META: Record<Idea['category'], { icon: string; label: string; chip: string }> = {
   restaurant: { icon: '🍽', label: '餐廳', chip: 'text-rose-600 bg-rose-50 border-rose-100' },
   cafe: { icon: '☕', label: '咖啡廳', chip: 'text-amber-700 bg-amber-50 border-amber-200' },
   landmark: { icon: '🏛', label: '景點', chip: 'text-blue-600 bg-blue-50 border-blue-100' },
   shopping: { icon: '🛍', label: '購物', chip: 'text-purple-600 bg-purple-50 border-purple-100' },
+  stay: { icon: '🏨', label: '住宿', chip: 'text-teal-700 bg-teal-50 border-teal-100' },
   other: { icon: '✨', label: '其他', chip: 'text-stone-600 bg-stone-100 border-stone-200' },
 };
 
@@ -31,6 +34,41 @@ const CATEGORY_META: Record<Idea['category'], { icon: string; label: string; chi
 function normalizeCategory(raw: unknown): Idea['category'] {
   const c = String(raw || '').toLowerCase();
   return c === 'restaurant' || c === 'cafe' || c === 'landmark' || c === 'shopping' ? c : 'other';
+}
+
+/**
+ * Shrink a picked image to a JPEG data URL that fits in one Firestore document.
+ *
+ * The cap is on the encoded string, not the file: a data URL is ~4/3 the size
+ * of its bytes and the document also carries a few small fields, so 900k
+ * characters keeps clear of the 1 MiB limit. Quality steps down first because
+ * it costs less detail than shrinking the dimensions does.
+ */
+const MAX_DATA_URL = 900_000;
+async function compressImage(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('無法讀取這張圖片'));
+      el.src = url;
+    });
+    for (const maxSide of [1600, 1280, 960]) {
+      const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.naturalWidth * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      for (const q of [0.85, 0.75, 0.6]) {
+        const out = canvas.toDataURL('image/jpeg', q);
+        if (out.length <= MAX_DATA_URL) return out;
+      }
+    }
+    throw new Error('圖片太大，壓縮後仍超過上限');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 type Candidate = {
@@ -83,6 +121,26 @@ export function IdeaStash({
   const [scheduleTime, setScheduleTime] = useState('12:00');
   const [placingId, setPlacingId] = useState<string | null>(null);
   const [showScheduled, setShowScheduled] = useState(false);
+
+  const [photos, setPhotos] = useState<IdeaPhoto[]>([]);
+  const [manualFiles, setManualFiles] = useState<File[]>([]);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState('');
+  const [viewer, setViewer] = useState<IdeaPhoto | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Which idea the shared hidden file input is currently picking for. */
+  const uploadTargetRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const q = query(collection(db, 'idea_photos'), where('trip_id', '==', trip.id));
+    return onSnapshot(q, snap => {
+      const rows = snap.docs.map(d => ({ ...d.data(), id: d.id })) as IdeaPhoto[];
+      rows.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+      setPhotos(rows);
+    });
+  }, [trip.id]);
+
+  const photosFor = (ideaId: string) => photos.filter(p => p.idea_id === ideaId);
 
   const open = ideas.filter(i => i.status !== 'scheduled');
   const scheduled = ideas.filter(i => i.status === 'scheduled');
@@ -159,10 +217,46 @@ export function IdeaStash({
     setSaving(false);
   };
 
+  const uploadPhotos = async (ideaId: string, files: File[]) => {
+    if (files.length === 0) return;
+    setUploadingId(ideaId);
+    setPhotoError('');
+    let failed = 0;
+    // One at a time: each is a canvas re-encode of a phone-sized photo, and
+    // decoding several at once is what makes a phone's tab reload itself.
+    for (const file of files) {
+      try {
+        const data_url = await compressImage(file);
+        await addDoc(collection(db, 'idea_photos'), {
+          trip_id: trip.id,
+          idea_id: ideaId,
+          data_url,
+          created_by: currentUser?.username || '—',
+          created_at: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error(err);
+        failed++;
+      }
+    }
+    if (failed) setPhotoError(`${failed} 張照片上傳失敗，請再試一次。`);
+    setUploadingId(null);
+  };
+
+  const pickPhotosFor = (ideaId: string) => {
+    uploadTargetRef.current = ideaId;
+    fileInputRef.current?.click();
+  };
+
+  const handleDeletePhoto = async (id: string) => {
+    await deleteDoc(doc(db, 'idea_photos', id));
+    setViewer(null);
+  };
+
   const handleManualAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualTitle.trim()) return;
-    await addDoc(collection(db, 'ideas'), {
+    const ref = await addDoc(collection(db, 'ideas'), {
       trip_id: trip.id,
       title: manualTitle.trim(),
       category: manualCategory,
@@ -175,9 +269,12 @@ export function IdeaStash({
       created_at: new Date().toISOString(),
       status: 'idea',
     });
+    const files = manualFiles;
     setManualTitle('');
     setManualNote('');
+    setManualFiles([]);
     setManualOpen(false);
+    await uploadPhotos(ref.id, files);
   };
 
   // ── AI day suggestions for the whole stash ─────────────────────────────
@@ -260,6 +357,9 @@ export function IdeaStash({
 
   const handleDelete = async (id: string) => {
     await deleteDoc(doc(db, 'ideas', id));
+    // Orphaned photos would never be shown again but would still ride along
+    // in every snapshot of this trip's photo collection.
+    await Promise.all(photosFor(id).map(p => deleteDoc(doc(db, 'idea_photos', p.id))));
   };
 
   const handleUnschedule = async (id: string) => {
@@ -269,6 +369,18 @@ export function IdeaStash({
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={e => {
+          const files = Array.from(e.target.files || []);
+          e.target.value = '';
+          if (uploadTargetRef.current) uploadPhotos(uploadTargetRef.current, files);
+        }}
+      />
       <div className="px-4 pt-4 pb-3 bg-gradient-to-br from-violet-50 via-white to-white border-b border-zinc-100">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -451,6 +563,17 @@ export function IdeaStash({
                 placeholder="為什麼想去？（選填）"
                 className="w-full text-xs px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:border-zinc-400 placeholder:text-zinc-300"
               />
+              <label className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-500 cursor-pointer w-fit hover:text-zinc-800">
+                <ImagePlus size={13} />
+                {manualFiles.length ? `已選 ${manualFiles.length} 張照片` : '附上照片（選填）'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={e => { setManualFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
+                />
+              </label>
               <div className="flex gap-1.5 flex-wrap">
                 {(Object.keys(CATEGORY_META) as Idea['category'][]).map(k => (
                   <button
@@ -477,6 +600,10 @@ export function IdeaStash({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {photoError && (
+        <p className="px-4 pt-3 text-[11px] text-red-500 font-medium">{photoError}</p>
+      )}
 
       {adviceError && (
         <p className="px-4 pt-3 text-[11px] text-amber-600 font-medium">{adviceError}</p>
@@ -520,6 +647,24 @@ export function IdeaStash({
                       {idea.duration && <span>⏱ {idea.duration}</span>}
                       <span>由 {idea.created_by} 加入</span>
                     </div>
+                    {(photosFor(idea.id).length > 0 || uploadingId === idea.id) && (
+                      <div className="flex gap-1.5 mt-2.5 overflow-x-auto pb-0.5">
+                        {photosFor(idea.id).map(p => (
+                          <button
+                            key={p.id}
+                            onClick={() => setViewer(p)}
+                            className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-zinc-100"
+                          >
+                            <img src={p.data_url} alt="" className="w-full h-full object-cover" />
+                          </button>
+                        ))}
+                        {uploadingId === idea.id && (
+                          <div className="w-16 h-16 rounded-lg flex-shrink-0 bg-zinc-50 border border-dashed border-zinc-200 flex items-center justify-center">
+                            <Loader2 size={14} className="animate-spin text-zinc-400" />
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <button
                     onClick={() => handleDelete(idea.id)}
@@ -570,6 +715,13 @@ export function IdeaStash({
                   >
                     <MapPin size={10} /> 地圖
                   </a>
+                  <button
+                    onClick={() => pickPhotosFor(idea.id)}
+                    disabled={uploadingId !== null}
+                    className="flex items-center gap-1 text-[11px] font-bold text-zinc-400 hover:text-teal-600 transition-colors disabled:opacity-40"
+                  >
+                    <ImagePlus size={10} /> 照片
+                  </button>
                   {idea.source?.startsWith('http') && (
                     <a
                       href={idea.source}
@@ -717,6 +869,37 @@ export function IdeaStash({
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {viewer && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setViewer(null)}
+            className="fixed inset-0 z-[100] bg-black/90 flex flex-col items-center justify-center p-4"
+          >
+            <img
+              src={viewer.data_url}
+              alt=""
+              onClick={e => e.stopPropagation()}
+              className="max-w-full max-h-[80vh] object-contain rounded-lg"
+            />
+            <div className="flex items-center gap-4 mt-4 text-xs text-white/70" onClick={e => e.stopPropagation()}>
+              <span>由 {viewer.created_by} 上傳</span>
+              <button
+                onClick={() => handleDeletePhoto(viewer.id)}
+                className="flex items-center gap-1 font-bold text-red-300 hover:text-red-400"
+              >
+                <Trash2 size={12} /> 刪除
+              </button>
+              <button onClick={() => setViewer(null)} className="flex items-center gap-1 font-bold hover:text-white">
+                <X size={12} /> 關閉
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

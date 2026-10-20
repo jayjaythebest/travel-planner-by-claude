@@ -107,6 +107,18 @@ service cloud.firestore {
     match /checklist/{doc}      { allow read, write: if signedIn(); }
     match /ideas/{doc}          { allow read, write: if signedIn(); }
 
+    // Photos for ideas, stored inline as JPEG data URLs (the project has no
+    // Storage bucket). Same boundary as the blocks above. The size cap mirrors
+    // MAX_DATA_URL in IdeaStash.tsx so a client that skips compression cannot
+    // park arbitrary blobs here; there is no update path because a photo is
+    // only ever added or removed.
+    match /idea_photos/{doc} {
+      allow read, delete: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.data_url is string
+        && request.resource.data.data_url.size() <= 900000;
+    }
+
     // Anything not named above stays closed. The old catch-all
     // `match /{document=**}` is deliberately not reproduced.
   }
