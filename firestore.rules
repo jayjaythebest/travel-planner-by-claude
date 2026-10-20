@@ -25,19 +25,22 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
-    // Both field checks are guarded with `in` because legacy trips are not a
-    // uniform shape: trips/MibJyJpTU3YuNvcF3XSw (東京, created before the app
-    // set an owner) carries shared_with and NO owner_id at all. Reading an
-    // absent key in rules raises an error rather than yielding null, and an
-    // error denies — so the unguarded form would have rejected that trip even
-    // though its shared_with matched, and it would have looked like a rules
-    // typo rather than a missing field.
+    // Deliberately unguarded. Legacy trips are not a uniform shape —
+    // trips/MibJyJpTU3YuNvcF3XSw (東京) has shared_with and no owner_id — but
+    // `||` in rules tolerates an error on one side when the other is true, so
+    // the missing key costs nothing.
+    //
+    // The previous version guarded each branch with `'owner_id' in data` and
+    // `data.shared_with is list`. That is fine for a get() but not for a
+    // query: Firestore proves a list rule from the query's filters alone, and
+    // neither guard follows from where('shared_with','array-contains',uid), so
+    // every non-admin trip query was rejected. Admins never ran those queries,
+    // which is why it went unnoticed from 2026-10-02 until the first non-admin
+    // signed in to an empty list.
     function mine(data) {
       return signedIn()
-        && ((('owner_id' in data) && data.owner_id == request.auth.uid)
-            || (('shared_with' in data)
-                && data.shared_with is list
-                && request.auth.uid in data.shared_with));
+        && (data.owner_id == request.auth.uid
+            || request.auth.uid in data.shared_with);
     }
 
     // Profiles: uid -> { username, email, role }.

@@ -577,7 +577,18 @@ export default function App() {
       await updateDoc(doc(db, "trips", tripToManage.documentId || tripToManage.id), {
         shared_with: sharedWith
       });
-      // trips are kept in sync via onSnapshot listener — no manual fetch needed
+      // There is no onSnapshot on trips — they come from fetchTrips()'s getDocs
+      // — so the local copies have to be moved by hand, exactly as
+      // handleSyncCalendar does. Without this the write landed in Firestore but
+      // nothing on screen changed: reopening 管理旅伴 re-read the stale
+      // tripToManage and rendered the old checkboxes, which looks identical to
+      // the save having failed.
+      setTrips(prev =>
+        prev.map(t => (t.id === tripToManage.id ? { ...t, shared_with: sharedWith } : t)),
+      );
+      setSelectedTrip(prev =>
+        prev && prev.id === tripToManage.id ? { ...prev, shared_with: sharedWith } : prev,
+      );
       setIsManagingBuddies(false);
       setTripToManage(null);
     } catch (err) {
@@ -753,23 +764,26 @@ export default function App() {
           return { ...data, id: data.id || doc.id, documentId: doc.id } as Trip;
         });
       } else {
-        // For regular users, check both owner_id and shared_with
-        const q = query(tripsCollection, where("shared_with", "array-contains", currentUser.id));
-        const tripsSnapshot = await getDocs(q);
-        const sharedTrips = tripsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          return { ...data, id: data.id || doc.id, documentId: doc.id } as Trip;
-        });
-
-        const q2 = query(tripsCollection, where("owner_id", "==", currentUser.id));
-        const tripsSnapshot2 = await getDocs(q2);
-        const ownedTrips = tripsSnapshot2.docs.map(doc => {
-          const data = doc.data();
-          return { ...data, id: data.id || doc.id, documentId: doc.id } as Trip;
+        // For regular users, check both owner_id and shared_with. Settled
+        // independently: when one query was rejected by the rules, awaiting
+        // them in sequence threw away the other's results too and the user saw
+        // an empty list with nothing on screen saying why.
+        const results = await Promise.allSettled([
+          getDocs(query(tripsCollection, where("shared_with", "array-contains", currentUser.id))),
+          getDocs(query(tripsCollection, where("owner_id", "==", currentUser.id))),
+        ]);
+        const combined = results.flatMap(r => {
+          if (r.status === 'rejected') {
+            console.error("Error fetching trips:", r.reason);
+            return [];
+          }
+          return r.value.docs.map(doc => {
+            const data = doc.data();
+            return { ...data, id: data.id || doc.id, documentId: doc.id } as Trip;
+          });
         });
 
         // Merge and remove duplicates
-        const combined = [...sharedTrips, ...ownedTrips];
         tripsList = Array.from(new Map(combined.map(item => [item.id, item])).values());
       }
       // Newest first. Sorted here rather than at render because this is the
@@ -2724,7 +2738,7 @@ export default function App() {
               <div className="flex gap-3">
                 <button 
                   type="button"
-                  onClick={() => setIsManagingBuddies(false)}
+                  onClick={() => { setIsManagingBuddies(false); setTripToManage(null); }}
                   className="flex-1 py-3 bg-zinc-100 text-zinc-600 rounded-xl font-bold"
                 >
                   取消
