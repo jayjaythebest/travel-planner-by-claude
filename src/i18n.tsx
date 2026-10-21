@@ -322,6 +322,11 @@ const EN: Record<string, string> = {
   '支出分布': 'Spending by category',
   '詳細分析 →': 'Details →',
   '還有 {n} 項沒準備，在 Day 1 可以勾選': '{n} items left to pack — tick them off on Day 1',
+  '建議': 'Suggested',
+  '全部加入行程': 'Add all to plan',
+  '加入這筆': 'Add this one',
+  '已加入 {n} 筆': '{n} already added',
+  '加入失敗，請再試一次。': 'Could not add it. Please try again.',
 
   // ── Idea stash ──
   '靈感暫存區': 'Idea stash',

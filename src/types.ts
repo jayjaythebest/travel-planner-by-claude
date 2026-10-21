@@ -22,6 +22,38 @@ export interface Trip {
     /** ISO timestamp of the last successful sync, for the button's subtitle. */
     syncedAt: string;
   };
+  /**
+   * A day-by-day plan proposed for this trip but not yet on it — shown in the
+   * overview as "suggested" until someone imports it into real activities.
+   *
+   * On the trip rather than in its own collection because trip members can
+   * already update the trip under the existing rules, and a plan is small.
+   * Imported stops are flagged rather than removed so a half-imported day
+   * cannot offer the same stop twice.
+   */
+  suggested_plan?: {
+    /** Where the plan came from, for the "from …" line. */
+    source?: string;
+    days: SuggestedDay[];
+  };
+}
+
+export interface SuggestedDay {
+  date: string;
+  title: string;
+  stops: SuggestedStop[];
+}
+
+export interface SuggestedStop {
+  id: string;
+  start_time: string;
+  end_time: string;
+  activity: string;
+  area?: string;
+  note?: string;
+  /** Title of the stash idea this stop places, so importing marks it scheduled. */
+  idea_title?: string;
+  imported?: boolean;
 }
 
 export interface User {

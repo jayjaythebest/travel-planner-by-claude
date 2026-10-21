@@ -969,6 +969,58 @@ export default function App() {
 
 
 
+  /**
+   * Turn suggested stops for one day into real activities.
+   *
+   * Each stop that places a stash idea also flips that idea to scheduled, the
+   * same as 排進行程 does, so the stash and the plan never both offer it. The
+   * imported flags are written back last: a run that dies half way leaves the
+   * rest of the day still offered, at the cost of possibly re-offering a stop
+   * that did land.
+   */
+  const handleImportSuggestion = async (date: string, stopIds: string[]) => {
+    if (!selectedTrip?.suggested_plan) return;
+    const plan = selectedTrip.suggested_plan;
+    const day = plan.days.find(d => d.date === date);
+    if (!day) return;
+    const tripRef = selectedTrip;
+
+    for (const s of day.stops.filter(s => stopIds.includes(s.id) && !s.imported)) {
+      const idea = s.idea_title ? ideas.find(i => i.title === s.idea_title) : undefined;
+      const docRef = await addDoc(collection(db, 'activities'), {
+        id: crypto.randomUUID(),
+        trip_id: tripRef.id,
+        date,
+        start_time: s.start_time,
+        end_time: s.end_time,
+        activity: s.activity,
+        map_url: idea?.map_url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([s.activity, s.area, tripRef.country].filter(Boolean).join(' '))}`,
+        note: s.note || '',
+        is_flight: false,
+        travel_mode: 'transit',
+      });
+      geminiService.getItineraryAdvice(s.activity, tripRef.country)
+        .then(advice => { if (advice) updateDoc(docRef, { ai_advice: advice }); }).catch(() => {});
+      geminiService.getActivityPhoto(s.activity, tripRef.country)
+        .then(photoUrl => { if (photoUrl) updateDoc(docRef, { photo_url: photoUrl }); }).catch(() => {});
+      if (idea && idea.status !== 'scheduled') {
+        await updateDoc(doc(db, 'ideas', idea.id), { status: 'scheduled', scheduled_date: date });
+      }
+    }
+
+    const next = {
+      ...plan,
+      days: plan.days.map(d => d.date !== date ? d : {
+        ...d,
+        stops: d.stops.map(s => (stopIds.includes(s.id) ? { ...s, imported: true } : s)),
+      }),
+    };
+    await updateDoc(doc(db, 'trips', tripRef.documentId || tripRef.id), { suggested_plan: next });
+    // trips are not under a listener — see handleUpdateBuddies.
+    setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, suggested_plan: next } : prev));
+    setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, suggested_plan: next } : tr)));
+  };
+
   const handleSelectTrip = (trip: Trip) => {
     setSelectedTrip(trip);
     setActiveTab(OVERVIEW_TAB);
@@ -2056,6 +2108,7 @@ export default function App() {
               onOpenExpenses={() => { setShowTotalExpense(true); setIsExpenseAnalysisOpen(true); }}
               onAddAccommodation={() => setIsAddingAccommodation(true)}
               onAddFlight={() => setIsAddingFlight(true)}
+              onImportSuggestion={handleImportSuggestion}
             />
           ) : (
           <>
