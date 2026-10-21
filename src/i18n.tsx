@@ -263,9 +263,9 @@ const EN: Record<string, string> = {
   '幣值': 'Currency',
   '類別': 'Category',
   '確認記帳': 'Save expense',
-  '支出分析 (TWD)': 'Spending (TWD)',
+  '支出分析 ({cur})': 'Spending ({cur})',
   '所有支出明細': 'All expenses',
-  '總計支出 (TWD)': 'Total (TWD)',
+  '總計支出 ({cur})': 'Total ({cur})',
 
   // ── Export ──
   '匯出行程表': 'Export itinerary',
@@ -308,7 +308,7 @@ const EN: Record<string, string> = {
   '個景點與活動': 'places & activities',
   '{done}／{total} 晚已安排': '{done}/{total} nights booked',
   '當日來回': 'Day trip',
-  '{n} 筆 · TWD': '{n} items · TWD',
+  '{n} 筆 · {cur}': '{n} items · {cur}',
   '完成 {pct}%': '{pct}% done',
   '尚未建立': 'Not started',
   '還缺什麼': 'Still missing',

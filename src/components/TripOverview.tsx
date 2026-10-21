@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
-import { cn, EXCHANGE_RATES } from '../utils';
+import { cn, convertAmount, totalsCurrency } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay } from '../types';
 import { IdeaStash } from './IdeaStash';
 import { t, useLang, getLang } from '../i18n';
@@ -182,9 +182,10 @@ export function TripOverview({
   const flights = activities.filter(a => a.is_flight);
   const spots = activities.filter(a => !a.is_flight);
 
-  const totalTWD = expenses.reduce((sum, e) => sum + e.amount * (EXCHANGE_RATES[e.currency] || 1), 0);
+  const totalCurrency = totalsCurrency(trip.country);
+  const totalSpent = expenses.reduce((sum, e) => sum + convertAmount(e.amount, e.currency, totalCurrency), 0);
   const byCategory = expenses.reduce<Record<string, number>>((acc, e) => {
-    acc[e.category] = (acc[e.category] || 0) + e.amount * (EXCHANGE_RATES[e.currency] || 1);
+    acc[e.category] = (acc[e.category] || 0) + convertAmount(e.amount, e.currency, totalCurrency);
     return acc;
   }, {});
   const topCategories = Object.entries(byCategory).sort((a, b) => b[1] - a[1]).slice(0, 4);
@@ -302,8 +303,8 @@ export function TripOverview({
         <StatTile
           icon={<Wallet size={11} />}
           label={t('總支出')}
-          value={`$${Math.round(totalTWD).toLocaleString()}`}
-          sub={t('{n} 筆 · TWD', { n: expenses.length })}
+          value={`$${Math.round(totalSpent).toLocaleString()}`}
+          sub={t('{n} 筆 · {cur}', { n: expenses.length, cur: totalCurrency })}
           onClick={onOpenExpenses}
         />
         <StatTile
@@ -515,14 +516,14 @@ export function TripOverview({
                   <span className="text-zinc-400 tabular-nums">
                     ${Math.round(amount).toLocaleString()}
                     <span className="text-zinc-300 ml-1.5">
-                      {totalTWD > 0 ? Math.round((amount / totalTWD) * 100) : 0}%
+                      {totalSpent > 0 ? Math.round((amount / totalSpent) * 100) : 0}%
                     </span>
                   </span>
                 </div>
                 <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
-                    animate={{ width: `${totalTWD > 0 ? (amount / totalTWD) * 100 : 0}%` }}
+                    animate={{ width: `${totalSpent > 0 ? (amount / totalSpent) * 100 : 0}%` }}
                     transition={{ duration: 0.5, ease: 'easeOut' }}
                     className="h-full bg-zinc-900 rounded-full"
                   />

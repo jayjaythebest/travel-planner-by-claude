@@ -263,3 +263,17 @@ export function isValidTimeZone(tz: string | undefined | null): tz is string {
     return false;
   }
 }
+
+/**
+ * The currency a trip's totals are shown in: TWD for a trip in Taiwan, USD for
+ * everywhere else. Expenses keep the currency they were paid in; this only
+ * decides what they are summed into.
+ */
+export function totalsCurrency(country: string): 'TWD' | 'USD' {
+  return CURRENCY_MAP[country] === 'TWD' ? 'TWD' : 'USD';
+}
+
+/** Convert through EXCHANGE_RATES, which are TWD per unit. */
+export function convertAmount(amount: number, from: string, to: string): number {
+  return (amount * (EXCHANGE_RATES[from] || 1)) / (EXCHANGE_RATES[to] || 1);
+}

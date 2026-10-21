@@ -27,7 +27,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, EXCHANGE_RATES, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -1966,10 +1966,8 @@ export default function App() {
       // "From the day after check-in" -> current > checkIn
       return current > checkIn && current <= checkOut;
     });
-    const totalExpenseTWD = expenses.reduce((sum, e) => {
-      const rate = EXCHANGE_RATES[e.currency] || 1;
-      return sum + (e.amount * rate);
-    }, 0);
+    const totalCurrency = totalsCurrency(selectedTrip.country);
+    const totalExpense = expenses.reduce((sum, e) => sum + convertAmount(e.amount, e.currency, totalCurrency), 0);
 
     return (
       <div className="flex flex-col h-screen bg-zinc-50">
@@ -2030,7 +2028,7 @@ export default function App() {
                     >
                       <div className="text-[8px] uppercase font-bold opacity-60 leading-tight">{t('總支出')}</div>
                       <div className="text-xs font-bold leading-tight">
-                        {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()}` : t('查看')}
+                        {showTotalExpense ? `$${Math.round(totalExpense).toLocaleString()}` : t('查看')}
                       </div>
                     </button>
                   </div>
@@ -2050,7 +2048,7 @@ export default function App() {
                 onClick={() => { showTotalExpense ? setIsExpenseAnalysisOpen(true) : setShowTotalExpense(true); }}
                 className="text-[10px] font-bold text-zinc-500 bg-zinc-100 px-2 py-1 rounded-lg"
               >
-                {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()} TWD` : t('查看支出')}
+                {showTotalExpense ? `$${Math.round(totalExpense).toLocaleString()} ${totalCurrency}` : t('查看支出')}
               </button>
             </div>
           )}
@@ -3450,29 +3448,24 @@ export default function App() {
           </Modal>
         )}
 
-        {isExpenseAnalysisOpen && selectedTrip && (
-          <Modal title={t('支出分析 (TWD)')} onClose={() => setIsExpenseAnalysisOpen(false)}>
+        {isExpenseAnalysisOpen && selectedTrip && (() => {
+          const cur = totalsCurrency(selectedTrip.country);
+          const toCur = (e: Expense) => convertAmount(e.amount, e.currency, cur);
+          const total = expenses.reduce((sum, e) => sum + toCur(e), 0);
+          return (
+          <Modal title={t('支出分析 ({cur})', { cur })} onClose={() => setIsExpenseAnalysisOpen(false)}>
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-3">
                 {["交通", "住宿", "飲食", "購物", "其他"].map(cat => {
-                  const catTotalTWD = expenses
-                    .filter(e => e.category === cat)
-                    .reduce((sum, e) => {
-                      const rate = EXCHANGE_RATES[e.currency] || 1;
-                      return sum + (e.amount * rate);
-                    }, 0);
-                  const totalTWD = expenses.reduce((sum, e) => {
-                    const rate = EXCHANGE_RATES[e.currency] || 1;
-                    return sum + (e.amount * rate);
-                  }, 0);
-                  const percent = totalTWD > 0 ? Math.round((catTotalTWD / totalTWD) * 100) : 0;
+                  const catTotal = expenses.filter(e => e.category === cat).reduce((sum, e) => sum + toCur(e), 0);
+                  const percent = total > 0 ? Math.round((catTotal / total) * 100) : 0;
                   
                   return (
                     <div key={cat} className="bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
                       <div className="flex items-center gap-2 text-zinc-400 mb-1">
                         <span className="text-[10px] font-bold uppercase tracking-wider">{t(cat)}</span>
                       </div>
-                      <div className="text-lg font-bold text-zinc-900">${Math.round(catTotalTWD).toLocaleString()}</div>
+                      <div className="text-lg font-bold text-zinc-900">${Math.round(catTotal).toLocaleString()}</div>
                       <div className="w-full bg-zinc-200 h-1 rounded-full mt-2 overflow-hidden">
                         <div className="bg-zinc-900 h-full" style={{ width: `${percent}%` }} />
                       </div>
@@ -3486,8 +3479,7 @@ export default function App() {
                 <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">{t('所有支出明細')}</h4>
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                   {[...expenses].sort((a, b) => b.date.localeCompare(a.date)).map((e) => {
-                    const rate = EXCHANGE_RATES[e.currency] || 1;
-                    const amountTWD = e.amount * rate;
+                    const converted = toCur(e);
                     return (
                       <div key={e.id} className="flex items-center justify-between p-3 bg-white border border-zinc-100 rounded-xl group">
                         <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -3497,7 +3489,7 @@ export default function App() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2 ml-2 shrink-0">
-                          <div className="text-xs font-bold text-zinc-900">${Math.round(amountTWD).toLocaleString()}</div>
+                          <div className="text-xs font-bold text-zinc-900">${Math.round(converted).toLocaleString()}</div>
                           <button
                             onClick={() => { setIsExpenseAnalysisOpen(false); openEditExpense(e); }}
                             className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 transition-colors"
@@ -3518,15 +3510,13 @@ export default function App() {
               </div>
 
               <div className="bg-zinc-900 text-white p-5 rounded-2xl shadow-lg">
-                <div className="text-[10px] font-bold uppercase opacity-60 mb-1">{t('總計支出 (TWD)')}</div>
-                <div className="text-2xl font-bold">${Math.round(expenses.reduce((sum, e) => {
-                  const rate = EXCHANGE_RATES[e.currency] || 1;
-                  return sum + (e.amount * rate);
-                }, 0)).toLocaleString()}</div>
+                <div className="text-[10px] font-bold uppercase opacity-60 mb-1">{t('總計支出 ({cur})', { cur })}</div>
+                <div className="text-2xl font-bold">${Math.round(total).toLocaleString()}</div>
               </div>
             </div>
           </Modal>
-        )}
+          );
+        })()}
       </AnimatePresence>
 
       {/* Calendar sync result. Tapping dismisses; it also clears itself, so a
