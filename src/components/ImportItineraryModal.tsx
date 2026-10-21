@@ -6,6 +6,7 @@ import { Modal } from './Modal';
 import { DestinationPicker } from './DestinationPicker';
 import { geminiService } from '../services/geminiService';
 import { COUNTRY_LIST } from '../utils';
+import { t, useLang } from '../i18n';
 
 /** What the review step edits. Days are offsets; real dates come from startDate. */
 export type DraftActivity = {
@@ -110,7 +111,7 @@ function toDraft(raw: unknown, countries: string[]): ImportDraft {
   const startDate = /^\d{4}-\d{2}-\d{2}$/.test(parsedStart) ? parsedStart : '';
 
   return {
-    name: String(r.name ?? '').trim() || '匯入的行程',
+    name: String(r.name ?? '').trim() || t('匯入的行程'),
     // The prompt hands the model the exact list, but a model can still answer
     // off-list. An unmatched country would miss TIMEZONE_MAP and CURRENCY_MAP,
     // so it is dropped and the user picks — an empty select is an obvious
@@ -145,6 +146,7 @@ export function ImportItineraryModal({
   onClose: () => void;
   onConfirm: (draft: ImportDraft) => Promise<void>;
 }) {
+  useLang();
   const [stage, setStage] = useState<'pick' | 'parsing' | 'review' | 'saving'>('pick');
   const [error, setError] = useState('');
   const [fileName, setFileName] = useState('');
@@ -155,7 +157,7 @@ export function ImportItineraryModal({
       const file = accepted[0];
       if (!file) return;
       if (file.size > MAX_FILE_BYTES) {
-        setError(`檔案 ${(file.size / 1024 / 1024).toFixed(1)} MB，超過 15 MB 上限。`);
+        setError(t('檔案 {mb} MB，超過 15 MB 上限。', { mb: (file.size / 1024 / 1024).toFixed(1) }));
         return;
       }
       setError('');
@@ -167,7 +169,7 @@ export function ImportItineraryModal({
         const raw = await geminiService.parseItineraryFile(base64, mimeType, COUNTRY_LIST);
         const next = toDraft(raw, COUNTRY_LIST);
         if (next.days.every((d) => d.activities.length === 0)) {
-          setError('讀得到檔案，但裡面找不到可以排進行程的活動。換一個檔案或手動建立旅程。');
+          setError(t('讀得到檔案，但裡面找不到可以排進行程的活動。換一個檔案或手動建立旅程。'));
           setStage('pick');
           return;
         }
@@ -175,7 +177,7 @@ export function ImportItineraryModal({
         setStage('review');
       } catch (err) {
         console.error(err);
-        setError('解析失敗，請確認檔案內容是行程表，或稍後再試。');
+        setError(t('解析失敗，請確認檔案內容是行程表，或稍後再試。'));
         setStage('pick');
       }
     },
@@ -230,13 +232,13 @@ export function ImportItineraryModal({
       onClose();
     } catch (err) {
       console.error(err);
-      setError('寫入失敗，沒有任何資料被建立。請再試一次。');
+      setError(t('寫入失敗，沒有任何資料被建立。請再試一次。'));
       setStage('review');
     }
   };
 
   return (
-    <Modal title="從檔案匯入行程" onClose={onClose}>
+    <Modal title={t('從檔案匯入行程')} onClose={onClose}>
       {(stage === 'pick' || stage === 'parsing') && (
         <div className="space-y-4">
           <div
@@ -249,22 +251,22 @@ export function ImportItineraryModal({
             {stage === 'parsing' ? (
               <div className="flex flex-col items-center gap-3 text-zinc-500">
                 <Loader2 size={28} className="animate-spin" />
-                <p className="text-sm font-bold">AI 正在讀 {fileName}…</p>
-                <p className="text-xs">整份行程手冊可能要等半分鐘</p>
+                <p className="text-sm font-bold">{t('AI 正在讀 {name}…', { name: fileName })}</p>
+                <p className="text-xs">{t('整份行程手冊可能要等半分鐘')}</p>
               </div>
             ) : (
               <div className="flex flex-col items-center gap-3 text-zinc-500">
                 <FileUp size={28} />
-                <p className="text-sm font-bold text-zinc-700">把行程檔拖進來，或點擊選擇</p>
-                <p className="text-xs">PDF、截圖、純文字都可以</p>
+                <p className="text-sm font-bold text-zinc-700">{t('把行程檔拖進來，或點擊選擇')}</p>
+                <p className="text-xs">{t('PDF、截圖、純文字都可以')}</p>
               </div>
             )}
           </div>
           {error && <p className="text-xs text-red-500 font-bold">{error}</p>}
           <p className="text-[11px] text-zinc-400 leading-relaxed">
-            檔案會傳給 Gemini 解析。解析完會先讓你檢查與修改，
-            <span className="font-bold text-zinc-500">確認之後才會真的建立旅程</span>
-            {' '}—— AI 讀出來的時間多半是它依活動性質推的，不是檔案裡寫的。
+            {t('檔案會傳給 Gemini 解析。解析完會先讓你檢查與修改，')}
+            <span className="font-bold text-zinc-500">{t('確認之後才會真的建立旅程')}</span>
+            {t(' —— AI 讀出來的時間多半是它依活動性質推的，不是檔案裡寫的。')}
           </p>
         </div>
       )}
@@ -273,7 +275,7 @@ export function ImportItineraryModal({
         <div className="space-y-5">
           <div className="space-y-3">
             <div>
-              <label className="block text-sm font-bold text-zinc-600 mb-1">旅程名稱</label>
+              <label className="block text-sm font-bold text-zinc-600 mb-1">{t('旅程名稱')}</label>
               <input
                 value={draft.name}
                 onChange={(e) => patch({ name: e.target.value })}
@@ -282,14 +284,14 @@ export function ImportItineraryModal({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">國家</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('國家')}</label>
                 <DestinationPicker
                   value={draft.country}
                   onChange={(country) => patch({ country })}
                 />
               </div>
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">出發日期</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('出發日期')}</label>
                 <input
                   type="date"
                   value={draft.startDate}
@@ -299,8 +301,8 @@ export function ImportItineraryModal({
               </div>
             </div>
             <p className="text-xs text-zinc-500">
-              共 {draft.dayCount} 天、{activityCount} 筆活動
-              {endDate ? ` · ${draft.startDate} ~ ${endDate}` : ' · 選了出發日期才能算出結束日'}
+              {t('共 {days} 天、{n} 筆活動', { days: draft.dayCount, n: activityCount })}
+              {endDate ? ` · ${draft.startDate} ~ ${endDate}` : t(' · 選了出發日期才能算出結束日')}
             </p>
           </div>
 
@@ -314,7 +316,7 @@ export function ImportItineraryModal({
                     : ''}
                 </h4>
                 {day.activities.length === 0 && (
-                  <p className="text-xs text-zinc-300 pl-1">（這天沒有活動）</p>
+                  <p className="text-xs text-zinc-300 pl-1">{t('（這天沒有活動）')}</p>
                 )}
                 {day.activities.map((a, actIndex) => (
                   <div
@@ -330,7 +332,7 @@ export function ImportItineraryModal({
                       <button
                         onClick={() => removeActivity(dayIndex, actIndex)}
                         className="p-2 text-zinc-300 hover:text-red-500 transition-colors"
-                        title="移除這筆"
+                        title={t('移除這筆')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -361,7 +363,7 @@ export function ImportItineraryModal({
 
           {draft.accommodations.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">住宿</h4>
+              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">{t('住宿')}</h4>
               {draft.accommodations.map((acc, i) => (
                 <div
                   key={i}
@@ -389,7 +391,7 @@ export function ImportItineraryModal({
 
           {draft.checklist.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">準備清單</h4>
+              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">{t('準備清單')}</h4>
               {draft.checklist.map((item, i) => (
                 <div
                   key={i}
@@ -415,10 +417,10 @@ export function ImportItineraryModal({
             className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg disabled:opacity-40 flex items-center justify-center gap-2"
           >
             {stage === 'saving' && <Loader2 size={16} className="animate-spin" />}
-            {stage === 'saving' ? '建立中…' : `確認建立（${activityCount} 筆活動）`}
+            {stage === 'saving' ? t('建立中…') : t('確認建立（{n} 筆活動）', { n: activityCount })}
           </button>
           {!ready && stage === 'review' && (
-            <p className="text-[11px] text-zinc-400 text-center">名稱、國家、出發日期都填了才能建立</p>
+            <p className="text-[11px] text-zinc-400 text-center">{t('名稱、國家、出發日期都填了才能建立')}</p>
           )}
         </div>
       )}

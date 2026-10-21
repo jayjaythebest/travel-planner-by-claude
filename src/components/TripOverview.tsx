@@ -15,8 +15,9 @@ import { format, parseISO, differenceInDays } from 'date-fns';
 import { cn, EXCHANGE_RATES } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User } from '../types';
 import { IdeaStash } from './IdeaStash';
+import { t, useLang, getLang } from '../i18n';
 
-const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+const weekday = (d: Date) => (getLang() === 'en' ? format(d, 'EEE') : '週' + '日一二三四五六'[d.getDay()]);
 
 /** A night is covered when some booking spans it: check_in ≤ night < check_out. */
 function isNightCovered(night: string, accommodations: Accommodation[]) {
@@ -82,6 +83,7 @@ export function TripOverview({
   onAddAccommodation: () => void;
   onAddFlight: () => void;
 }) {
+  useLang();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const start = parseISO(trip.start_date);
@@ -92,10 +94,10 @@ export function TripOverview({
 
   const status =
     daysUntil > 0
-      ? { label: `出發倒數 ${daysUntil} 天`, tone: 'bg-blue-50 text-blue-600 border-blue-100' }
+      ? { label: t('出發倒數 {n} 天', { n: daysUntil }), tone: 'bg-blue-50 text-blue-600 border-blue-100' }
       : today <= end
-        ? { label: '旅程進行中', tone: 'bg-emerald-50 text-emerald-600 border-emerald-100' }
-        : { label: '已完成', tone: 'bg-zinc-100 text-zinc-400 border-zinc-200' };
+        ? { label: t('旅程進行中'), tone: 'bg-emerald-50 text-emerald-600 border-emerald-100' }
+        : { label: t('已完成'), tone: 'bg-zinc-100 text-zinc-400 border-zinc-200' };
 
   const flights = activities.filter(a => a.is_flight);
   const spots = activities.filter(a => !a.is_flight);
@@ -127,34 +129,34 @@ export function TripOverview({
   // does not. Four is enough to be specific before the tally takes over.
   const dayList = (days: { day: number }[]) =>
     days.length <= 4
-      ? `Day ${days.map(d => d.day).join('、')}`
-      : `Day ${days.slice(0, 4).map(d => d.day).join('、')} 等 ${days.length} 天`;
+      ? `Day ${days.map(d => d.day).join(t('、'))}`
+      : t('Day {list} 等 {n} 天', { list: days.slice(0, 4).map(d => d.day).join(t('、')), n: days.length });
 
   const warnings: { icon: React.ReactNode; text: string; action?: () => void; actionLabel?: string }[] = [];
   if (accommodations.length === 0 && dates.length > 1) {
     warnings.push({
       icon: <Hotel size={12} />,
-      text: '還沒有登記任何住宿',
+      text: t('還沒有登記任何住宿'),
       action: onAddAccommodation,
-      actionLabel: '新增住宿',
+      actionLabel: t('新增住宿'),
     });
   } else if (uncoveredNights.length > 0) {
     warnings.push({
       icon: <Hotel size={12} />,
-      text: `${dayList(uncoveredNights)}的晚上還沒有住宿`,
+      text: t('{days}的晚上還沒有住宿', { days: dayList(uncoveredNights) }),
       action: onAddAccommodation,
-      actionLabel: '新增住宿',
+      actionLabel: t('新增住宿'),
     });
   }
   if (flights.length === 0) {
-    warnings.push({ icon: <Plane size={12} />, text: '還沒有登記航班', action: onAddFlight, actionLabel: '新增航班' });
+    warnings.push({ icon: <Plane size={12} />, text: t('還沒有登記航班'), action: onAddFlight, actionLabel: t('新增航班') });
   }
   if (emptyDays.length > 0) {
     warnings.push({
       icon: <Calendar size={12} />,
-      text: `${dayList(emptyDays)}還是空的`,
+      text: t('{days}還是空的', { days: dayList(emptyDays) }),
       action: () => onJumpToDay(emptyDays[0].date),
-      actionLabel: `去 Day ${emptyDays[0].day}`,
+      actionLabel: t('去 Day {n}', { n: emptyDays[0].day }),
     });
   }
 
@@ -179,21 +181,21 @@ export function TripOverview({
           </div>
           <div className="flex items-center gap-4 mt-4 pt-4 border-t border-white/10">
             <div>
-              <div className="text-[9px] font-bold text-white/40 uppercase tracking-widest">出發</div>
+              <div className="text-[9px] font-bold text-white/40 uppercase tracking-widest">{t('出發')}</div>
               <div className="text-sm font-bold tabular-nums">{format(start, 'M/d')}</div>
-              <div className="text-[9px] text-white/40">週{WEEKDAYS[start.getDay()]}</div>
+              <div className="text-[9px] text-white/40">{weekday(start)}</div>
             </div>
             <div className="flex-1 flex items-center gap-1.5">
               <div className="flex-1 border-t border-dashed border-white/20" />
               <span className="text-[10px] font-bold text-white/60 whitespace-nowrap">
-                {dates.length}天{nights}夜
+                {t('{days}天{nights}夜', { days: dates.length, nights })}
               </span>
               <div className="flex-1 border-t border-dashed border-white/20" />
             </div>
             <div className="text-right">
-              <div className="text-[9px] font-bold text-white/40 uppercase tracking-widest">回程</div>
+              <div className="text-[9px] font-bold text-white/40 uppercase tracking-widest">{t('回程')}</div>
               <div className="text-sm font-bold tabular-nums">{format(end, 'M/d')}</div>
-              <div className="text-[9px] text-white/40">週{WEEKDAYS[end.getDay()]}</div>
+              <div className="text-[9px] text-white/40">{weekday(end)}</div>
             </div>
           </div>
         </div>
@@ -203,32 +205,32 @@ export function TripOverview({
       <div className="grid grid-cols-2 gap-2.5">
         <StatTile
           icon={<MapPin size={11} />}
-          label="行程"
+          label={t('行程')}
           value={`${spots.length}`}
-          sub={flights.length > 0 ? `另有 ${flights.length} 段航班` : '個景點與活動'}
+          sub={flights.length > 0 ? t('另有 {n} 段航班', { n: flights.length }) : t('個景點與活動')}
         />
         <StatTile
           icon={<Hotel size={11} />}
-          label="住宿"
+          label={t('住宿')}
           value={`${accommodations.length}`}
           sub={
             dates.length > 1
-              ? `${nights - uncoveredNights.length}／${nights} 晚已安排`
-              : '當日來回'
+              ? t('{done}／{total} 晚已安排', { done: nights - uncoveredNights.length, total: nights })
+              : t('當日來回')
           }
         />
         <StatTile
           icon={<Wallet size={11} />}
-          label="總支出"
+          label={t('總支出')}
           value={`$${Math.round(totalTWD).toLocaleString()}`}
-          sub={`${expenses.length} 筆 · TWD`}
+          sub={t('{n} 筆 · TWD', { n: expenses.length })}
           onClick={onOpenExpenses}
         />
         <StatTile
           icon={<CheckSquare size={11} />}
-          label="準備清單"
+          label={t('準備清單')}
           value={checklist.length > 0 ? `${checkedCount}／${checklist.length}` : '—'}
-          sub={checklist.length > 0 ? `完成 ${checklistPct}%` : '尚未建立'}
+          sub={checklist.length > 0 ? t('完成 {pct}%', { pct: checklistPct }) : t('尚未建立')}
           onClick={() => onJumpToDay(dates[0])}
         />
       </div>
@@ -238,7 +240,7 @@ export function TripOverview({
         <div className="bg-amber-50/60 border border-amber-100 rounded-2xl p-3 space-y-2">
           <div className="flex items-center gap-1.5 text-amber-700">
             <AlertTriangle size={11} />
-            <span className="text-[10px] font-bold uppercase tracking-widest">還缺什麼</span>
+            <span className="text-[10px] font-bold uppercase tracking-widest">{t('還缺什麼')}</span>
           </div>
           {warnings.map((w, i) => (
             <div key={i} className="flex items-center gap-2 text-[11px] text-amber-900/80">
@@ -269,7 +271,7 @@ export function TripOverview({
 
       {/* ── Day by day ── */}
       <div className="space-y-2">
-        <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">每日一覽</h3>
+        <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('每日一覽')}</h3>
         <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden divide-y divide-zinc-100">
           {dates.map((date, i) => {
             const dayActivities = activities
@@ -313,16 +315,16 @@ export function TripOverview({
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-xs font-bold text-zinc-700 tabular-nums">
                       {format(d, 'M/d')}
-                      <span className="font-normal text-zinc-400 ml-1">週{WEEKDAYS[d.getDay()]}</span>
+                      <span className="font-normal text-zinc-400 ml-1">{weekday(d)}</span>
                     </span>
                     {isToday && (
                       <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">
-                        今天
+                        {t('今天')}
                       </span>
                     )}
                     {hasFlight && <Plane size={10} className="text-blue-400" />}
-                    {checkIn && <span className="text-[9px]" title={`入住 ${checkIn.name}`}>🔑</span>}
-                    {checkOut && <span className="text-[9px]" title={`退房 ${checkOut.name}`}>🧳</span>}
+                    {checkIn && <span className="text-[9px]" title={t('入住 {name}', { name: checkIn.name })}>🔑</span>}
+                    {checkOut && <span className="text-[9px]" title={t('退房 {name}', { name: checkOut.name })}>🧳</span>}
                   </div>
                   <p
                     className={cn(
@@ -331,8 +333,8 @@ export function TripOverview({
                     )}
                   >
                     {dayActivities.length === 0
-                      ? '這天還是空的'
-                      : preview || `${dayActivities.length} 項行程`}
+                      ? t('這天還是空的')
+                      : preview || t('{n} 項行程', { n: dayActivities.length })}
                   </p>
                 </div>
 
@@ -351,7 +353,7 @@ export function TripOverview({
       {/* ── Flights ── */}
       {flights.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">航班</h3>
+          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('航班')}</h3>
           <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
             {flights
               .slice()
@@ -364,7 +366,7 @@ export function TripOverview({
                 >
                   <Plane size={14} className="text-blue-400 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-zinc-800 truncate">{f.activity}</div>
+                    <div className="text-xs font-bold text-zinc-800 truncate">{f.activity.replace('航班:', t('航班:'))}</div>
                     <div className="text-[10px] text-zinc-400 tabular-nums mt-0.5">
                       {format(parseISO(f.date), 'M/d')} · {f.start_time} → {f.end_time}
                     </div>
@@ -379,7 +381,7 @@ export function TripOverview({
       {/* ── Accommodations ── */}
       {accommodations.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">住宿</h3>
+          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('住宿')}</h3>
           <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
             {accommodations
               .slice()
@@ -392,7 +394,7 @@ export function TripOverview({
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-bold text-zinc-800 truncate">{acc.name}</div>
                       <div className="text-[10px] text-zinc-400 tabular-nums mt-0.5">
-                        {format(parseISO(acc.check_in), 'M/d')} → {format(parseISO(acc.check_out), 'M/d')} · {accNights} 晚
+                        {format(parseISO(acc.check_in), 'M/d')} → {format(parseISO(acc.check_out), 'M/d')} · {t('{n} 晚', { n: accNights })}
                       </div>
                     </div>
                     {acc.map_url && (
@@ -402,7 +404,7 @@ export function TripOverview({
                         rel="noopener noreferrer"
                         className="text-[11px] font-bold text-emerald-600 hover:underline flex items-center gap-1 flex-shrink-0"
                       >
-                        <MapPin size={10} /> 地圖
+                        <MapPin size={10} /> {t('地圖')}
                       </a>
                     )}
                   </div>
@@ -416,16 +418,16 @@ export function TripOverview({
       {topCategories.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">支出分布</h3>
+            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('支出分布')}</h3>
             <button onClick={onOpenExpenses} className="text-[11px] font-bold text-zinc-400 hover:text-zinc-900">
-              詳細分析 →
+              {t('詳細分析 →')}
             </button>
           </div>
           <div className="bg-white rounded-2xl border border-zinc-200 p-3.5 space-y-2.5">
             {topCategories.map(([cat, amount]) => (
               <div key={cat}>
                 <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="font-bold text-zinc-600">{cat}</span>
+                  <span className="font-bold text-zinc-600">{t(cat)}</span>
                   <span className="text-zinc-400 tabular-nums">
                     ${Math.round(amount).toLocaleString()}
                     <span className="text-zinc-300 ml-1.5">
@@ -456,7 +458,7 @@ export function TripOverview({
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-1.5">
               <CheckSquare size={12} className="text-zinc-400" />
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">準備清單</span>
+              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">{t('準備清單')}</span>
             </div>
             <span className="text-[11px] font-bold text-zinc-500 tabular-nums">
               {checkedCount}／{checklist.length}
@@ -472,7 +474,7 @@ export function TripOverview({
           </div>
           {checklistPct < 100 && (
             <p className="text-[10px] text-zinc-400 mt-2 flex items-center gap-1">
-              <Sparkles size={9} /> 還有 {checklist.length - checkedCount} 項沒準備，在 Day 1 可以勾選
+              <Sparkles size={9} /> {t('還有 {n} 項沒準備，在 Day 1 可以勾選', { n: checklist.length - checkedCount })}
             </p>
           )}
         </button>

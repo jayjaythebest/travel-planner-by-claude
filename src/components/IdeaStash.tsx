@@ -20,6 +20,7 @@ import { db } from '../services/firebase';
 import { geminiService } from '../services/geminiService';
 import { cn } from '../utils';
 import { Trip, Activity, Idea, IdeaPhoto, User } from '../types';
+import { t, useLang } from '../i18n';
 
 const CATEGORY_META: Record<Idea['category'], { icon: string; label: string; chip: string }> = {
   restaurant: { icon: '🍽', label: '餐廳', chip: 'text-rose-600 bg-rose-50 border-rose-100' },
@@ -51,7 +52,7 @@ async function compressImage(file: File): Promise<string> {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image();
       el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('無法讀取這張圖片'));
+      el.onerror = () => reject(new Error(t('無法讀取這張圖片')));
       el.src = url;
     });
     for (const maxSide of [1600, 1280, 960]) {
@@ -65,7 +66,7 @@ async function compressImage(file: File): Promise<string> {
         if (out.length <= MAX_DATA_URL) return out;
       }
     }
-    throw new Error('圖片太大，壓縮後仍超過上限');
+    throw new Error(t('圖片太大，壓縮後仍超過上限'));
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -98,6 +99,7 @@ export function IdeaStash({
   currentUser: User | null;
   onJumpToDay: (date: string) => void;
 }) {
+  useLang();
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [pasteSource, setPasteSource] = useState('');
@@ -163,7 +165,7 @@ export function IdeaStash({
         ideas.map(i => i.title),
       );
       if (raw.length === 0) {
-        setExtractError('這段文字裡沒有找到具體的地點，可以試試貼多一點內容。');
+        setExtractError(t('這段文字裡沒有找到具體的地點，可以試試貼多一點內容。'));
       } else {
         setCandidates(
           raw.map((r: any) => ({
@@ -178,7 +180,7 @@ export function IdeaStash({
       }
     } catch (err) {
       console.error(err);
-      setExtractError('AI 讀取失敗，請稍後再試一次。');
+      setExtractError(t('AI 讀取失敗，請稍後再試一次。'));
     }
     setExtracting(false);
   };
@@ -212,7 +214,7 @@ export function IdeaStash({
       setPasteOpen(false);
     } catch (err) {
       console.error(err);
-      setExtractError('儲存失敗，請再試一次。');
+      setExtractError(t('儲存失敗，請再試一次。'));
     }
     setSaving(false);
   };
@@ -239,7 +241,7 @@ export function IdeaStash({
         failed++;
       }
     }
-    if (failed) setPhotoError(`${failed} 張照片上傳失敗，請再試一次。`);
+    if (failed) setPhotoError(t('{n} 張照片上傳失敗，請再試一次。', { n: failed }));
     setUploadingId(null);
   };
 
@@ -306,12 +308,12 @@ export function IdeaStash({
         next[idea.id] = { date: s.date, suggestedTime: s.suggestedTime, reason: s.reason };
       }
       if (Object.keys(next).length === 0) {
-        setAdviceError('AI 這次沒有給出可用的建議，可以先手動安排幾天再試。');
+        setAdviceError(t('AI 這次沒有給出可用的建議，可以先手動安排幾天再試。'));
       }
       setSuggestions(next);
     } catch (err) {
       console.error(err);
-      setAdviceError('AI 建議失敗，請稍後再試。');
+      setAdviceError(t('AI 建議失敗，請稍後再試。'));
     }
     setAdviceLoading(false);
   };
@@ -388,9 +390,9 @@ export function IdeaStash({
               <Lightbulb size={16} />
             </div>
             <div>
-              <h3 className="text-sm font-bold text-zinc-900 leading-tight">靈感暫存區</h3>
+              <h3 className="text-sm font-bold text-zinc-900 leading-tight">{t('靈感暫存區')}</h3>
               <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
-                想去但還沒決定哪天的地方 · {open.length} 個待安排
+                {t('想去但還沒決定哪天的地方 · {n} 個待安排', { n: open.length })}
               </p>
             </div>
           </div>
@@ -401,7 +403,7 @@ export function IdeaStash({
               className="flex items-center gap-1.5 text-[11px] font-bold px-2.5 py-1.5 rounded-full bg-violet-600 text-white shadow-sm active:scale-95 transition-all disabled:opacity-50 flex-shrink-0"
             >
               {adviceLoading ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
-              {adviceLoading ? '安排中' : 'AI 建議安排'}
+              {adviceLoading ? t('安排中') : t('AI 建議安排')}
             </button>
           )}
         </div>
@@ -416,7 +418,7 @@ export function IdeaStash({
                 : 'bg-white text-zinc-500 border-zinc-200 hover:border-violet-200 hover:text-violet-600',
             )}
           >
-            <ClipboardPaste size={11} /> 貼上網站內容
+            <ClipboardPaste size={11} /> {t('貼上網站內容')}
           </button>
           <button
             onClick={() => { setManualOpen(o => !o); setPasteOpen(false); }}
@@ -427,7 +429,7 @@ export function IdeaStash({
                 : 'bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300',
             )}
           >
-            <Plus size={11} /> 手動新增
+            <Plus size={11} /> {t('手動新增')}
           </button>
         </div>
       </div>
@@ -446,13 +448,13 @@ export function IdeaStash({
                 value={pasteText}
                 onChange={e => setPasteText(e.target.value)}
                 rows={5}
-                placeholder="把部落格、網站或朋友傳來的文字整段貼進來，AI 會挑出裡面提到的地點…"
+                placeholder={t('把部落格、網站或朋友傳來的文字整段貼進來，AI 會挑出裡面提到的地點…')}
                 className="w-full text-sm px-3 py-2.5 bg-white border border-violet-100 rounded-xl focus:border-violet-300 outline-none placeholder:text-zinc-300 resize-y leading-relaxed"
               />
               <input
                 value={pasteSource}
                 onChange={e => setPasteSource(e.target.value)}
-                placeholder="來源網址（選填，之後可以點回去看原文）"
+                placeholder={t('來源網址（選填，之後可以點回去看原文）')}
                 className="w-full text-xs px-3 py-2 bg-white border border-violet-100 rounded-xl focus:border-violet-300 outline-none placeholder:text-zinc-300"
               />
               <div className="flex items-center gap-2">
@@ -462,9 +464,9 @@ export function IdeaStash({
                   className="flex items-center gap-1.5 px-3 py-2 bg-violet-600 text-white rounded-xl font-bold text-xs disabled:opacity-40 hover:bg-violet-700 transition-colors"
                 >
                   {extracting ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                  {extracting ? '擷取中…' : 'AI 擷取地點'}
+                  {extracting ? t('擷取中…') : t('AI 擷取地點')}
                 </button>
-                <span className="text-[10px] text-zinc-400">擷取後可以勾選要收藏的項目</span>
+                <span className="text-[10px] text-zinc-400">{t('擷取後可以勾選要收藏的項目')}</span>
               </div>
               {extractError && <p className="text-[11px] text-red-500 font-medium">{extractError}</p>}
 
@@ -472,7 +474,7 @@ export function IdeaStash({
                 <div className="space-y-2 pt-1">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
-                      找到 {candidates.length} 個地點
+                      {t('找到 {n} 個地點', { n: candidates.length })}
                     </span>
                     <button
                       onClick={() =>
@@ -482,7 +484,7 @@ export function IdeaStash({
                       }
                       className="text-[10px] font-bold text-violet-600 hover:underline"
                     >
-                      {candidates.every(c => c.picked) ? '全部取消' : '全選'}
+                      {candidates.every(c => c.picked) ? t('全部取消') : t('全選')}
                     </button>
                   </div>
                   <div className="space-y-1.5 max-h-72 overflow-y-auto">
@@ -513,7 +515,7 @@ export function IdeaStash({
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-xs font-bold text-zinc-900">{c.title}</span>
                               <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full border', meta.chip)}>
-                                {meta.icon} {meta.label}
+                                {meta.icon} {t(meta.label)}
                               </span>
                             </div>
                             {c.note && <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed">{c.note}</p>}
@@ -532,7 +534,7 @@ export function IdeaStash({
                     className="w-full py-2.5 bg-zinc-900 text-white rounded-xl font-bold text-xs disabled:opacity-40 flex items-center justify-center gap-1.5"
                   >
                     {saving ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-                    加入收藏（{candidates.filter(c => c.picked).length}）
+                    {t('加入收藏（{n}）', { n: candidates.filter(c => c.picked).length })}
                   </button>
                 </div>
               )}
@@ -554,18 +556,18 @@ export function IdeaStash({
               <input
                 value={manualTitle}
                 onChange={e => setManualTitle(e.target.value)}
-                placeholder="地點名稱"
+                placeholder={t('地點名稱')}
                 className="w-full text-sm px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:border-zinc-400 placeholder:text-zinc-300"
               />
               <input
                 value={manualNote}
                 onChange={e => setManualNote(e.target.value)}
-                placeholder="為什麼想去？（選填）"
+                placeholder={t('為什麼想去？（選填）')}
                 className="w-full text-xs px-3 py-2 bg-white border border-zinc-200 rounded-xl outline-none focus:border-zinc-400 placeholder:text-zinc-300"
               />
               <label className="flex items-center gap-1.5 text-[11px] font-bold text-zinc-500 cursor-pointer w-fit hover:text-zinc-800">
                 <ImagePlus size={13} />
-                {manualFiles.length ? `已選 ${manualFiles.length} 張照片` : '附上照片（選填）'}
+                {manualFiles.length ? t('已選 {n} 張照片', { n: manualFiles.length }) : t('附上照片（選填）')}
                 <input
                   type="file"
                   accept="image/*"
@@ -585,7 +587,7 @@ export function IdeaStash({
                       manualCategory === k ? CATEGORY_META[k].chip : 'bg-white text-zinc-400 border-zinc-200',
                     )}
                   >
-                    {CATEGORY_META[k].icon} {CATEGORY_META[k].label}
+                    {CATEGORY_META[k].icon} {t(CATEGORY_META[k].label)}
                   </button>
                 ))}
               </div>
@@ -594,7 +596,7 @@ export function IdeaStash({
                 disabled={!manualTitle.trim()}
                 className="w-full py-2.5 bg-zinc-900 text-white rounded-xl font-bold text-xs disabled:opacity-40"
               >
-                加入收藏
+                {t('加入收藏')}
               </button>
             </form>
           </motion.div>
@@ -613,9 +615,9 @@ export function IdeaStash({
       <div className="p-4 space-y-2">
         {open.length === 0 && scheduled.length === 0 && (
           <div className="text-center py-8">
-            <p className="text-sm text-zinc-400 font-medium">還沒有收藏任何地點</p>
+            <p className="text-sm text-zinc-400 font-medium">{t('還沒有收藏任何地點')}</p>
             <p className="text-[11px] text-zinc-300 mt-1 leading-relaxed">
-              看到想去的地方就先丟進來，<br />哪一天去之後再決定
+              {t('看到想去的地方就先丟進來，')}<br />{t('哪一天去之後再決定')}
             </p>
           </div>
         )}
@@ -638,14 +640,14 @@ export function IdeaStash({
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-sm font-bold text-zinc-900 leading-snug">{idea.title}</span>
                       <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full border', meta.chip)}>
-                        {meta.icon} {meta.label}
+                        {meta.icon} {t(meta.label)}
                       </span>
                     </div>
                     {idea.note && <p className="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">{idea.note}</p>}
                     <div className="flex items-center gap-2.5 mt-1.5 text-[9px] text-zinc-400 flex-wrap">
                       {idea.area && <span className="flex items-center gap-0.5"><MapPin size={8} />{idea.area}</span>}
                       {idea.duration && <span>⏱ {idea.duration}</span>}
-                      <span>由 {idea.created_by} 加入</span>
+                      <span>{t('由 {name} 加入', { name: idea.created_by })}</span>
                     </div>
                     {(photosFor(idea.id).length > 0 || uploadingId === idea.id) && (
                       <div className="flex gap-1.5 mt-2.5 overflow-x-auto pb-0.5">
@@ -688,7 +690,7 @@ export function IdeaStash({
                     <div className="flex items-center gap-1.5 mb-1">
                       <Sparkles size={10} className="text-violet-500" />
                       <span className="text-[10px] font-bold text-violet-700">
-                        建議排在 Day {dates.indexOf(sug.date) + 1}
+                        {t('建議排在 Day {n}', { n: dates.indexOf(sug.date) + 1 })}
                         <span className="font-normal opacity-70 ml-1">
                           （{format(parseISO(sug.date), 'M/d')}{sug.suggestedTime ? ` ${sug.suggestedTime}` : ''}）
                         </span>
@@ -701,7 +703,7 @@ export function IdeaStash({
                       className="mt-2 flex items-center gap-1 text-[10px] font-bold text-white bg-violet-600 px-2.5 py-1 rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50"
                     >
                       {placingId === idea.id ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
-                      就這樣排
+                      {t('就這樣排')}
                     </button>
                   </motion.div>
                 )}
@@ -713,14 +715,14 @@ export function IdeaStash({
                     rel="noopener noreferrer"
                     className="flex items-center gap-1 text-[11px] font-bold text-zinc-400 hover:text-amber-600 transition-colors"
                   >
-                    <MapPin size={10} /> 地圖
+                    <MapPin size={10} /> {t('地圖')}
                   </a>
                   <button
                     onClick={() => pickPhotosFor(idea.id)}
                     disabled={uploadingId !== null}
                     className="flex items-center gap-1 text-[11px] font-bold text-zinc-400 hover:text-teal-600 transition-colors disabled:opacity-40"
                   >
-                    <ImagePlus size={10} /> 照片
+                    <ImagePlus size={10} /> {t('照片')}
                   </button>
                   {idea.source?.startsWith('http') && (
                     <a
@@ -729,7 +731,7 @@ export function IdeaStash({
                       rel="noopener noreferrer"
                       className="text-[11px] font-bold text-zinc-400 hover:text-zinc-700 transition-colors"
                     >
-                      原文
+                      {t('原文')}
                     </a>
                   )}
                   <button
@@ -740,7 +742,7 @@ export function IdeaStash({
                     }}
                     className="flex items-center gap-1 text-[11px] font-bold text-zinc-600 hover:text-violet-600 transition-colors ml-auto"
                   >
-                    <CalendarPlus size={11} /> 排進行程
+                    <CalendarPlus size={11} /> {t('排進行程')}
                   </button>
                 </div>
 
@@ -760,7 +762,7 @@ export function IdeaStash({
                       <div className="mt-2.5 pt-2.5 border-t border-zinc-100 space-y-2">
                         <div className="flex items-end gap-2">
                           <div className="flex-1 min-w-0">
-                            <label className="block text-[9px] font-bold text-zinc-400 uppercase tracking-widest mb-1">哪一天</label>
+                            <label className="block text-[9px] font-bold text-zinc-400 uppercase tracking-widest mb-1">{t('哪一天')}</label>
                             <select
                               value={scheduleDate}
                               onChange={e => setScheduleDate(e.target.value)}
@@ -774,7 +776,7 @@ export function IdeaStash({
                             </select>
                           </div>
                           <div className="w-32 flex-shrink-0">
-                            <label className="block text-[9px] font-bold text-zinc-400 uppercase tracking-widest mb-1">時間</label>
+                            <label className="block text-[9px] font-bold text-zinc-400 uppercase tracking-widest mb-1">{t('時間')}</label>
                             <input
                               type="time"
                               value={scheduleTime}
@@ -790,13 +792,13 @@ export function IdeaStash({
                             className="flex-1 py-2 bg-zinc-900 text-white rounded-lg font-bold text-xs disabled:opacity-40 flex items-center justify-center gap-1.5"
                           >
                             {placingId === idea.id ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
-                            確認加入
+                            {t('確認加入')}
                           </button>
                           <button
                             onClick={() => setSchedulingId(null)}
                             className="px-3 py-2 text-zinc-400 hover:text-zinc-700 text-xs font-bold flex-shrink-0"
                           >
-                            取消
+                            {t('取消')}
                           </button>
                         </div>
                       </div>
@@ -815,7 +817,7 @@ export function IdeaStash({
               onClick={() => setShowScheduled(s => !s)}
               className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors"
             >
-              已排進行程（{scheduled.length}）
+              {t('已排進行程（{n}）', { n: scheduled.length })}
               <ChevronDown size={12} className={cn('transition-transform', showScheduled && 'rotate-180')} />
             </button>
             <AnimatePresence initial={false}>
@@ -850,7 +852,7 @@ export function IdeaStash({
                               onClick={() => handleUnschedule(idea.id)}
                               className="text-[10px] font-bold text-zinc-400 hover:text-violet-600 transition-colors flex-shrink-0"
                             >
-                              放回收藏
+                              {t('放回收藏')}
                             </button>
                           )}
                           <button
@@ -886,15 +888,15 @@ export function IdeaStash({
               className="max-w-full max-h-[80vh] object-contain rounded-lg"
             />
             <div className="flex items-center gap-4 mt-4 text-xs text-white/70" onClick={e => e.stopPropagation()}>
-              <span>由 {viewer.created_by} 上傳</span>
+              <span>{t('由 {name} 上傳', { name: viewer.created_by })}</span>
               <button
                 onClick={() => handleDeletePhoto(viewer.id)}
                 className="flex items-center gap-1 font-bold text-red-300 hover:text-red-400"
               >
-                <Trash2 size={12} /> 刪除
+                <Trash2 size={12} /> {t('刪除')}
               </button>
               <button onClick={() => setViewer(null)} className="flex items-center gap-1 font-bold hover:text-white">
-                <X size={12} /> 關閉
+                <X size={12} /> {t('關閉')}
               </button>
             </div>
           </motion.div>

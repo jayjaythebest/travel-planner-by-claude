@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { DESTINATIONS } from '../utils';
+import { t, useLang } from '../i18n';
 
 /**
  * A type-to-search replacement for the country `<select>`.
@@ -19,13 +20,14 @@ export function DestinationPicker({
   value,
   onChange,
   name,
-  placeholder = '搜尋國家…',
+  placeholder = t('搜尋國家…'),
 }: {
   value: string;
   onChange: (value: string) => void;
   name?: string;
   placeholder?: string;
 }) {
+  useLang();
   const [open, setOpen] = useState(false);
   const [queryText, setQueryText] = useState('');
   const [highlight, setHighlight] = useState(0);
@@ -108,7 +110,7 @@ export function DestinationPicker({
         onKeyDown={onKeyDown}
         className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm text-left flex items-center justify-between gap-2"
       >
-        <span className={value ? 'text-zinc-900' : 'text-zinc-400'}>{value || '請選擇國家'}</span>
+        <span className={value ? 'text-zinc-900' : 'text-zinc-400'}>{value || t('請選擇國家')}</span>
         <ChevronDown size={16} className="text-zinc-400 flex-shrink-0" />
       </button>
 
@@ -131,7 +133,7 @@ export function DestinationPicker({
           </div>
           <div className="max-h-56 overflow-y-auto">
             {matches.length === 0 && (
-              <p className="px-3 py-4 text-xs text-zinc-400 text-center">找不到「{queryText}」</p>
+              <p className="px-3 py-4 text-xs text-zinc-400 text-center">{t('找不到「{q}」', { q: queryText })}</p>
             )}
             {matches.map((d, i) => (
               <button

@@ -13,6 +13,7 @@
 import { addDays, format, parseISO } from 'date-fns';
 import type { Activity, Trip } from '../types';
 import { isValidTimeZone, TIMEZONE_MAP } from '../utils';
+import { t } from '../i18n';
 
 const SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
@@ -78,7 +79,7 @@ function loadGis(): Promise<void> {
     const fail = () => {
       // Let the next attempt retry rather than caching the failure forever.
       gisPromise = null;
-      reject(new CalendarError('Google 登入元件載入失敗，請確認網路連線或擋廣告的擴充套件。'));
+      reject(new CalendarError(t('Google 登入元件載入失敗，請確認網路連線或擋廣告的擴充套件。')));
     };
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${GIS_SRC}"]`);
     if (existing) {
@@ -111,7 +112,7 @@ async function getAccessToken(): Promise<string> {
 
   await loadGis();
   const oauth2 = window.google?.accounts?.oauth2;
-  if (!oauth2) throw new CalendarError('Google 登入元件載入失敗，請重新整理後再試。');
+  if (!oauth2) throw new CalendarError(t('Google 登入元件載入失敗，請重新整理後再試。'));
 
   if (!tokenClient) {
     tokenClient = oauth2.initTokenClient({
@@ -130,7 +131,7 @@ async function getAccessToken(): Promise<string> {
     const watchdog = setTimeout(() => {
       reject(
         new CalendarError(
-          'Google 授權視窗沒有出現，可能被瀏覽器封鎖了。請允許這個網站顯示彈出式視窗後再試一次。',
+          t('Google 授權視窗沒有出現，可能被瀏覽器封鎖了。請允許這個網站顯示彈出式視窗後再試一次。'),
         ),
       );
     }, 60_000);
@@ -143,7 +144,7 @@ async function getAccessToken(): Promise<string> {
 
     client.callback = (response) => {
       if (response.error || !response.access_token) {
-        reject(new CalendarError('Google 授權未完成，請再試一次。'));
+        reject(new CalendarError(t('Google 授權未完成，請再試一次。')));
         return;
       }
       cached = {
@@ -157,8 +158,8 @@ async function getAccessToken(): Promise<string> {
       reject(
         new CalendarError(
           error?.type === 'popup_closed'
-            ? '授權視窗被關閉，尚未同步。'
-            : '無法開啟 Google 授權視窗，請確認瀏覽器沒有封鎖彈出視窗。',
+            ? t('授權視窗被關閉，尚未同步。')
+            : t('無法開啟 Google 授權視窗，請確認瀏覽器沒有封鎖彈出視窗。'),
         ),
       );
     };
@@ -283,7 +284,7 @@ async function callApi(
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
       cached = null;
-      throw new CalendarError('Google 授權已失效或權限不足，請再按一次同步並重新授權。');
+      throw new CalendarError(t('Google 授權已失效或權限不足，請再按一次同步並重新授權。'));
     }
     return { status: response.status, body };
   }
@@ -309,7 +310,7 @@ export type SyncResult = {
  */
 export async function syncTripToCalendar(trip: Trip, activities: Activity[]): Promise<SyncResult> {
   if (!isCalendarConfigured()) {
-    throw new CalendarError('尚未設定 VITE_GOOGLE_OAUTH_CLIENT_ID，無法連動 Google Calendar。');
+    throw new CalendarError(t('尚未設定 VITE_GOOGLE_OAUTH_CLIENT_ID，無法連動 Google Calendar。'));
   }
 
   const token = await getAccessToken();
@@ -334,14 +335,14 @@ export async function syncTripToCalendar(trip: Trip, activities: Activity[]): Pr
       // the honest reading of "the app is the source of truth"; anything else
       // leaves the itinerary and the calendar quietly disagreeing.
       if (patched.status !== 404 && patched.status !== 410) {
-        throw new CalendarError(`更新「${activity.activity}」失敗（HTTP ${patched.status}）。`);
+        throw new CalendarError(t('更新「{name}」失敗（HTTP {status}）。', { name: activity.activity, status: patched.status }));
       }
     }
 
     const created = await callApi('', { method: 'POST', body }, token);
     const id = (created.body as { id?: string } | null)?.id;
     if (created.status >= 300 || !id) {
-      throw new CalendarError(`建立「${activity.activity}」失敗（HTTP ${created.status}）。`);
+      throw new CalendarError(t('建立「{name}」失敗（HTTP {status}）。', { name: activity.activity, status: created.status }));
     }
     events[activity.id] = id;
     added += 1;
@@ -355,7 +356,7 @@ export async function syncTripToCalendar(trip: Trip, activities: Activity[]): Pr
       removed += 1;
       continue;
     }
-    throw new CalendarError(`移除已刪除的行程失敗（HTTP ${deleted.status}）。`);
+    throw new CalendarError(t('移除已刪除的行程失敗（HTTP {status}）。', { status: deleted.status }));
   }
 
   return { events, added, updated, removed };

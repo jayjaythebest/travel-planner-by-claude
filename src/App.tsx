@@ -37,6 +37,7 @@ import { ImportItineraryModal, type ImportDraft } from './components/ImportItine
 import { DestinationPicker } from './components/DestinationPicker';
 import { TripOverview } from './components/TripOverview';
 import { syncTripToCalendar, CalendarError } from './services/googleCalendar';
+import { t, useLang, LangToggle } from './i18n';
 import { 
   collection,
   query,
@@ -327,7 +328,7 @@ function calcFlightDuration(startTime: string, endTime: string): string {
 
 function getTripNights(startDate: string, endDate: string): string {
   const nights = differenceInDays(parseISO(endDate), parseISO(startDate));
-  return `${nights + 1}天${nights}夜`;
+  return t('{days}天{nights}夜', { days: nights + 1, nights });
 }
 
 function getTripStatus(startDate: string, endDate: string): { label: string; color: string } {
@@ -336,9 +337,9 @@ function getTripStatus(startDate: string, endDate: string): { label: string; col
   const start = parseISO(startDate);
   const end = parseISO(endDate);
   const daysUntil = differenceInDays(start, today);
-  if (daysUntil > 0) return { label: `出發還有 ${daysUntil} 天`, color: 'text-blue-500' };
-  if (today <= end) return { label: '旅程進行中', color: 'text-emerald-600' };
-  return { label: '已完成', color: 'text-zinc-400' };
+  if (daysUntil > 0) return { label: t('出發還有 {n} 天', { n: daysUntil }), color: 'text-blue-500' };
+  if (today <= end) return { label: t('旅程進行中'), color: 'text-emerald-600' };
+  return { label: t('已完成'), color: 'text-zinc-400' };
 }
 
 /**
@@ -353,6 +354,7 @@ function getTripStatus(startDate: string, endDate: string): { label: string; col
 const OVERVIEW_TAB = 'overview';
 
 export default function App() {
+  useLang();
   const [trips, setTrips] = useState<Trip[]>([]);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -422,7 +424,7 @@ export default function App() {
   };
 
   const handleDeleteExpense = async (id: string) => {
-    if (!confirm('確定要刪除此支出嗎？')) return;
+    if (!confirm(t('確定要刪除此支出嗎？'))) return;
     try {
       await deleteDoc(doc(db, 'expenses', id));
     } catch (err) {
@@ -522,7 +524,7 @@ export default function App() {
         setIsLoginOpen(false);
       } catch (err) {
         console.error(err);
-        setLoginError('讀取使用者資料失敗，請重新登入。');
+        setLoginError(t('讀取使用者資料失敗，請重新登入。'));
       }
     });
     return () => unsub();
@@ -548,10 +550,10 @@ export default function App() {
       const code = (err as { code?: string }).code;
       setLoginError(
         code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request'
-          ? '登入視窗被關閉，尚未登入。'
+          ? t('登入視窗被關閉，尚未登入。')
           : code === 'auth/popup-blocked'
-            ? '登入視窗被瀏覽器封鎖，請允許彈出式視窗後再試。'
-            : '登入失敗，請稍後再試。',
+            ? t('登入視窗被瀏覽器封鎖，請允許彈出式視窗後再試。')
+            : t('登入失敗，請稍後再試。'),
       );
       console.error(err);
     } finally {
@@ -593,12 +595,12 @@ export default function App() {
       setTripToManage(null);
     } catch (err) {
       console.error(err);
-      alert('更新失敗');
+      alert(t('更新失敗'));
     }
   };
 
   const handleDeleteUser = async (id: string) => {
-    if (!confirm('確定要刪除此使用者嗎？')) return;
+    if (!confirm(t('確定要刪除此使用者嗎？'))) return;
     try {
       await deleteDoc(doc(db, "users", id));
     } catch (err) {
@@ -1019,7 +1021,7 @@ export default function App() {
       
       // Fallback if parsing failed
       if (!activityName) {
-        activityName = "新行程";
+        activityName = t('新行程');
       }
     }
 
@@ -1139,7 +1141,7 @@ export default function App() {
     setLoading(true);
     try {
       const advice = await geminiService.getItineraryAdvice(activity, selectedTrip.country);
-      setAiAdvice(prev => ({ ...prev, [activity]: advice || '暫無建議' }));
+      setAiAdvice(prev => ({ ...prev, [activity]: advice || t('暫無建議') }));
     } catch (err) {
       console.error(err);
     } finally {
@@ -1196,7 +1198,7 @@ export default function App() {
         setShowAiActivityInput(false);
       } catch (err) {
         console.error(err);
-        alert('解析失敗，請稍後再試');
+        alert(t('解析失敗，請稍後再試'));
       } finally {
         setLoading(false);
       }
@@ -1222,7 +1224,7 @@ export default function App() {
       setAiActivityText('');
     } catch (err) {
       console.error(err);
-      alert('解析失敗，請稍後再試');
+      alert(t('解析失敗，請稍後再試'));
     } finally {
       setLoading(false);
     }
@@ -1457,7 +1459,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${selectedTrip.name}_行程表.pdf`;
+      link.download = t('{name}_行程表.pdf', { name: selectedTrip.name });
       link.click();
       URL.revokeObjectURL(url);
     }
@@ -1489,14 +1491,14 @@ export default function App() {
           })
         });
         if (res.ok) {
-          alert('行程表已成功發送到您的信箱！');
+          alert(t('行程表已成功發送到您的信箱！'));
           setIsExportModalOpen(false);
         } else {
-          alert('發送失敗，請稍後再試。');
+          alert(t('發送失敗，請稍後再試。'));
         }
       } catch (err) {
         console.error(err);
-        alert('發送失敗，請檢查網路連線。');
+        alert(t('發送失敗，請檢查網路連線。'));
       } finally {
         setIsSendingEmail(false);
       }
@@ -1537,12 +1539,12 @@ export default function App() {
       setSelectedTrip(prev => (prev ? { ...prev, gcal } : prev));
       setTrips(prev => prev.map(t => (t.id === selectedTrip.id ? { ...t, gcal } : t)));
       setCalendarMessage(
-        `已連動 Google Calendar：新增 ${result.added}、更新 ${result.updated}、移除 ${result.removed}`,
+        t('已連動 Google Calendar：新增 {added}、更新 {updated}、移除 {removed}', { added: result.added, updated: result.updated, removed: result.removed }),
       );
     } catch (err) {
       // CalendarError already carries a sentence written for the user; anything
       // else is a bug and must not be echoed raw into the UI.
-      setCalendarMessage(err instanceof CalendarError ? err.message : '同步失敗，請稍後再試。');
+      setCalendarMessage(err instanceof CalendarError ? err.message : t('同步失敗，請稍後再試。'));
       console.error(err);
     } finally {
       setIsSyncingCalendar(false);
@@ -1550,7 +1552,7 @@ export default function App() {
   };
 
   const handleDeleteActivity = async (id: string) => {
-    if (!confirm('確定要刪除此行程嗎？')) return;
+    if (!confirm(t('確定要刪除此行程嗎？'))) return;
     try {
             await deleteDoc(doc(db, "activities", id));
     } catch (err) {
@@ -1559,7 +1561,7 @@ export default function App() {
   };
 
   const handleDeleteAccommodation = async (id: string) => {
-    if (!confirm('確定要刪除此住宿資訊嗎？')) return;
+    if (!confirm(t('確定要刪除此住宿資訊嗎？'))) return;
     try {
       await deleteDoc(doc(db, "accommodations", id));
     } catch (err) {
@@ -1634,24 +1636,22 @@ export default function App() {
           getDocs(query(collection(db, name), where('trip_id', '==', trip.id))),
         ),
       );
-      const labels = ['活動', '住宿', '支出', '清單項目'];
+      const labels = [t('活動'), t('住宿'), t('支出'), t('清單項目')];
       const parts = snapshots
-        .map((snap, i) => (snap.size > 0 ? `${snap.size} 筆${labels[i]}` : ''))
+        .map((snap, i) => (snap.size > 0 ? t('{n} 筆{what}', { n: snap.size, what: labels[i] }) : ''))
         .filter(Boolean);
       const gcalCount = Object.keys(trip.gcal?.events ?? {}).length;
 
       const message = [
-        `確定要刪除「${trip.name}」嗎？`,
-        parts.length > 0 ? `將一併刪除 ${parts.join('、')}。` : '這趟底下沒有其他資料。',
+        t('確定要刪除「{name}」嗎？', { name: trip.name }),
+        parts.length > 0 ? t('將一併刪除 {parts}。', { parts: parts.join(t('、')) }) : t('這趟底下沒有其他資料。'),
         // The calendar is not ours to clean up here: removing those events
         // needs a Google authorization popup, and springing one on someone
         // mid-delete is worse than telling them it did not happen.
         gcalCount > 0
-          ? `
-注意：Google Calendar 上那 ${gcalCount} 筆事件不會被移除，要自己去日曆刪。`
+          ? '\n' + t('注意：Google Calendar 上那 {n} 筆事件不會被移除，要自己去日曆刪。', { n: gcalCount })
           : '',
-        `
-此動作無法復原。`,
+        '\n' + t('此動作無法復原。'),
       ]
         .filter(Boolean)
         .join('');
@@ -1678,7 +1678,7 @@ export default function App() {
       }
     } catch (err) {
       console.error(err);
-      alert('刪除失敗。這趟旅程還在，可以再試一次。');
+      alert(t('刪除失敗。這趟旅程還在，可以再試一次。'));
     } finally {
       setDeletingTripId(null);
     }
@@ -1747,9 +1747,9 @@ export default function App() {
             value={newItem}
             onChange={(e) => setNewItem(e.target.value)}
             className="flex-1 p-2 bg-zinc-50 border border-zinc-200 rounded-lg text-sm focus:ring-1 focus:ring-zinc-900 outline-none"
-            placeholder="新增準備物品..."
+            placeholder={t('新增準備物品...')}
           />
-          <button className="px-4 bg-zinc-900 text-white rounded-lg text-sm font-bold">新增</button>
+          <button className="px-4 bg-zinc-900 text-white rounded-lg text-sm font-bold">{t('新增')}</button>
         </form>
         <div className="space-y-2">
           {checklist.map(item => (
@@ -1778,36 +1778,37 @@ export default function App() {
     <div className="p-4 space-y-6 max-w-2xl mx-auto">
       <div className="flex justify-between items-center py-4 safe-top">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">我的旅程</h1>
-          <p className="text-sm text-zinc-400 mt-1">歡迎回來, {currentUser?.username}</p>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900">{t('我的旅程')}</h1>
+          <p className="text-sm text-zinc-400 mt-1">{t('歡迎回來, {name}', { name: currentUser?.username ?? '' })}</p>
         </div>
         <div className="flex gap-2">
+          <LangToggle />
           {currentUser?.role === 'admin' && (
             <button 
               onClick={() => setIsUserManagementOpen(true)}
               className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-600 rounded-xl shadow-sm hover:bg-zinc-50 transition-colors text-sm font-bold"
-              title="使用者管理"
+              title={t('使用者管理')}
             >
-              <Users size={18} /> 成員管理
+              <Users size={18} /> {t('成員管理')}
             </button>
           )}
           <button
             onClick={() => setIsImportingItinerary(true)}
             className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-600 rounded-xl shadow-sm hover:bg-zinc-50 transition-colors text-sm font-bold"
-            title="從檔案匯入行程"
+            title={t('從檔案匯入行程')}
           >
-            <FileUp size={18} /> 匯入行程
+            <FileUp size={18} /> {t('匯入行程')}
           </button>
           <button 
             onClick={() => setIsAddingTrip(true)}
             className="flex items-center gap-2 px-3 py-2 bg-zinc-900 text-white rounded-xl shadow-sm hover:bg-zinc-800 transition-colors text-sm font-bold"
           >
-            <Plus size={18} /> 新增旅程
+            <Plus size={18} /> {t('新增旅程')}
           </button>
           <button 
             onClick={handleLogout}
             className="p-2 bg-white border border-zinc-200 text-zinc-400 rounded-xl shadow-sm hover:text-red-500 transition-colors"
-            title="登出"
+            title={t('登出')}
           >
             <X size={20} />
           </button>
@@ -1844,7 +1845,7 @@ export default function App() {
                         setIsManagingBuddies(true);
                       }}
                       className="p-1.5 text-zinc-300 hover:text-blue-500 transition-colors"
-                      title="管理旅伴"
+                      title={t('管理旅伴')}
                     >
                       <Users size={14} />
                     </button>
@@ -1852,7 +1853,7 @@ export default function App() {
                       onClick={(e) => handleDeleteTrip(e, trip)}
                       disabled={deletingTripId !== null}
                       className="p-1.5 text-zinc-300 hover:text-red-500 transition-colors disabled:opacity-40"
-                      title="刪除旅程"
+                      title={t('刪除旅程')}
                     >
                       {deletingTripId === trip.id
                         ? <Loader2 size={14} className="animate-spin" />
@@ -1876,7 +1877,7 @@ export default function App() {
                 </span>
                 {trip.owner_id !== currentUser?.id && (
                   <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-bold rounded-full border border-blue-100">
-                    受邀行程
+                    {t('受邀行程')}
                   </span>
                 )}
               </div>
@@ -1887,8 +1888,8 @@ export default function App() {
         })}
         {trips.length === 0 && (
           <div className="text-center py-20 text-zinc-400">
-            <p className="font-medium">尚未建立任何旅程</p>
-            <p className="text-sm">點擊右上角按鈕開始規劃吧！</p>
+            <p className="font-medium">{t('尚未建立任何旅程')}</p>
+            <p className="text-sm">{t('點擊右上角按鈕開始規劃吧！')}</p>
           </div>
         )}
       </div>
@@ -1944,17 +1945,18 @@ export default function App() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <button onClick={() => setIsAddingFlight(true)} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title="新增航班">
+                    <LangToggle compact />
+                    <button onClick={() => setIsAddingFlight(true)} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title={t('新增航班')}>
                       <Plane size={16} />
                     </button>
-                    <button onClick={() => setIsAddingAccommodation(true)} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title="新增住宿">
+                    <button onClick={() => setIsAddingAccommodation(true)} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title={t('新增住宿')}>
                       <Hotel size={16} />
                     </button>
                     <button
                       onClick={handleExportPDF}
                       disabled={isGeneratingPdf}
                       className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors disabled:opacity-50"
-                      title="匯出 PDF"
+                      title={t('匯出 PDF')}
                     >
                       {isGeneratingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                     </button>
@@ -1964,8 +1966,8 @@ export default function App() {
                       className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors disabled:opacity-50"
                       title={
                         selectedTrip.gcal?.syncedAt
-                          ? `連動 Google Calendar（上次同步 ${format(parseISO(selectedTrip.gcal.syncedAt), 'MM/dd HH:mm')}）`
-                          : '連動 Google Calendar'
+                          ? t('連動 Google Calendar（上次同步 {at}）', { at: format(parseISO(selectedTrip.gcal.syncedAt), 'MM/dd HH:mm') })
+                          : t('連動 Google Calendar')
                       }
                     >
                       {isSyncingCalendar ? <Loader2 size={16} className="animate-spin" /> : <CalendarCheck size={16} />}
@@ -1974,9 +1976,9 @@ export default function App() {
                       onClick={() => { showTotalExpense ? setIsExpenseAnalysisOpen(true) : setShowTotalExpense(true); }}
                       className="bg-zinc-900 text-white px-3 py-1.5 rounded-lg shadow-sm active:scale-95 transition-all text-right"
                     >
-                      <div className="text-[8px] uppercase font-bold opacity-60 leading-tight">總支出</div>
+                      <div className="text-[8px] uppercase font-bold opacity-60 leading-tight">{t('總支出')}</div>
                       <div className="text-xs font-bold leading-tight">
-                        {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()}` : '查看'}
+                        {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()}` : t('查看')}
                       </div>
                     </button>
                   </div>
@@ -1996,7 +1998,7 @@ export default function App() {
                 onClick={() => { showTotalExpense ? setIsExpenseAnalysisOpen(true) : setShowTotalExpense(true); }}
                 className="text-[10px] font-bold text-zinc-500 bg-zinc-100 px-2 py-1 rounded-lg"
               >
-                {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()} TWD` : '查看支出'}
+                {showTotalExpense ? `$${Math.round(totalExpenseTWD).toLocaleString()} TWD` : t('查看支出')}
               </button>
             </div>
           )}
@@ -2012,7 +2014,7 @@ export default function App() {
                   : "bg-white text-zinc-500 border-zinc-200"
               )}
             >
-              <LayoutGrid size={11} /> 總覽
+              <LayoutGrid size={11} /> {t('總覽')}
             </button>
             {/* The divider keeps 總覽 from reading as "Day 0" — it is a
                 different kind of thing, not the day before the first one. */}
@@ -2071,14 +2073,14 @@ export default function App() {
                       <Hotel size={16} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide mb-0.5">🔑 今日入住</div>
+                      <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide mb-0.5">{t('🔑 今日入住')}</div>
                       <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
                       <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}</div>
                     </div>
                     {acc.map_url && (
                       <a href={acc.map_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                         className="text-xs font-bold text-emerald-500 hover:underline flex items-center gap-1 flex-shrink-0">
-                        <MapPin size={11} /> 地圖
+                        <MapPin size={11} /> {t('地圖')}
                       </a>
                     )}
                     <button onClick={() => handleDeleteAccommodation(acc.id)}
@@ -2093,14 +2095,14 @@ export default function App() {
                       <Hotel size={16} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-0.5">🧳 今日退房</div>
+                      <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-0.5">{t('🧳 今日退房')}</div>
                       <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
                       <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}</div>
                     </div>
                     {acc.map_url && (
                       <a href={acc.map_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                         className="text-xs font-bold text-amber-500 hover:underline flex items-center gap-1 flex-shrink-0">
-                        <MapPin size={11} /> 地圖
+                        <MapPin size={11} /> {t('地圖')}
                       </a>
                     )}
                     <button onClick={() => handleDeleteAccommodation(acc.id)}
@@ -2118,7 +2120,7 @@ export default function App() {
             <div className="space-y-2">
               <button onClick={() => setIsChecklistExpanded(!isChecklistExpanded)}
                 className="flex items-center gap-2 text-sm font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors w-full">
-                準備清單
+                {t('準備清單')}
                 <MoreHorizontal size={14} className={cn("transition-transform", isChecklistExpanded ? "rotate-90" : "rotate-0")} />
               </button>
               <AnimatePresence>
@@ -2134,7 +2136,7 @@ export default function App() {
           {/* ── Itinerary Section ── */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">今日行程</h3>
+              <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('今日行程')}</h3>
               <button
                 onClick={() => { setDailyNeedOpen(o => !o); setDailyNeedSuggestion(s => ({ ...s, [activeTab]: '' })); }}
                 className={cn(
@@ -2144,7 +2146,7 @@ export default function App() {
                     : "bg-zinc-50 text-zinc-500 border-zinc-200 hover:border-amber-200 hover:text-amber-600"
                 )}
               >
-                <Sparkles size={11} /> 今日需求
+                <Sparkles size={11} /> {t('今日需求')}
               </button>
             </div>
 
@@ -2160,7 +2162,7 @@ export default function App() {
                   <div className="bg-gradient-to-br from-amber-50 to-stone-50 border border-amber-100 rounded-2xl p-4 space-y-3">
                     <div className="flex items-center gap-2">
                       <Sparkles size={13} className="text-amber-500" />
-                      <span className="text-xs font-bold text-amber-700">告訴 AI 你今天的需求</span>
+                      <span className="text-xs font-bold text-amber-700">{t('告訴 AI 你今天的需求')}</span>
                     </div>
                     <div className="flex gap-2">
                       <input
@@ -2183,7 +2185,7 @@ export default function App() {
                             setDailyNeedLoading(false);
                           }
                         }}
-                        placeholder="例：想買抹茶、找藥妝店、喝一杯精品咖啡..."
+                        placeholder={t('例：想買抹茶、找藥妝店、喝一杯精品咖啡...')}
                         className="flex-1 text-sm px-3 py-2 bg-white border border-amber-100 rounded-xl focus:border-amber-300 outline-none placeholder:text-stone-300"
                       />
                       <button
@@ -2205,7 +2207,7 @@ export default function App() {
                         className="px-3 py-2 bg-amber-500 text-white rounded-xl font-bold text-xs disabled:opacity-40 hover:bg-amber-600 transition-colors flex items-center gap-1.5 flex-shrink-0"
                       >
                         {dailyNeedLoading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                        {dailyNeedLoading ? '思考中' : '取得建議'}
+                        {dailyNeedLoading ? t('思考中') : t('取得建議')}
                       </button>
                     </div>
 
@@ -2232,7 +2234,7 @@ export default function App() {
                             <div className="flex gap-2 pt-1">
                               <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
                                 className="flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700 hover:underline">
-                                <MapPin size={11} /> 查看地圖
+                                <MapPin size={11} /> {t('查看地圖')}
                               </a>
                               <button
                                 onClick={async () => {
@@ -2263,7 +2265,7 @@ export default function App() {
                                 }}
                                 className="flex items-center gap-1 text-xs font-bold text-white bg-zinc-900 px-2.5 py-1 rounded-lg hover:bg-zinc-700 transition-colors"
                               >
-                                <Plus size={11} /> 加入今日行程
+                                <Plus size={11} /> {t('加入今日行程')}
                               </button>
                             </div>
                           </motion.div>
@@ -2284,7 +2286,7 @@ export default function App() {
                   <Hotel size={16} />
                 </div>
                 <div className="flex-1">
-                  <div className="text-xs font-bold text-zinc-500">從 {acc.name} 出發</div>
+                  <div className="text-xs font-bold text-zinc-500">{t('從 {name} 出發', { name: acc.name })}</div>
                   <div className="text-[9px] font-medium text-zinc-400">{acc.address}</div>
                 </div>
               </div>
@@ -2292,7 +2294,7 @@ export default function App() {
 
             {currentActivities.length === 0 && currentAccommodations.length === 0 ? (
               <div className="text-center py-12 bg-white rounded-2xl border border-zinc-100 border-dashed">
-                <p className="text-sm text-zinc-400">這天還沒有行程喔！</p>
+                <p className="text-sm text-zinc-400">{t('這天還沒有行程喔！')}</p>
               </div>
             ) : (
               /* ── Timeline ── */
@@ -2323,11 +2325,11 @@ export default function App() {
 
                   // AI advice renderer (shared)
                   const TYPE_META: Record<string, { icon: string; label: string; color: string }> = {
-                    restaurant: { icon: '🍽', label: '餐廳', color: 'text-rose-600 bg-rose-50 border-rose-100' },
-                    cafe:       { icon: '☕', label: '咖啡廳', color: 'text-amber-700 bg-amber-50 border-amber-200' },
-                    landmark:   { icon: '🏛', label: '景點', color: 'text-blue-600 bg-blue-50 border-blue-100' },
-                    shopping:   { icon: '🛍', label: '購物', color: 'text-purple-600 bg-purple-50 border-purple-100' },
-                    other:      { icon: '✨', label: '其他', color: 'text-stone-600 bg-stone-100 border-stone-200' },
+                    restaurant: { icon: '🍽', label: t('餐廳'), color: 'text-rose-600 bg-rose-50 border-rose-100' },
+                    cafe:       { icon: '☕', label: t('咖啡廳'), color: 'text-amber-700 bg-amber-50 border-amber-200' },
+                    landmark:   { icon: '🏛', label: t('景點'), color: 'text-blue-600 bg-blue-50 border-blue-100' },
+                    shopping:   { icon: '🛍', label: t('購物'), color: 'text-purple-600 bg-purple-50 border-purple-100' },
+                    other:      { icon: '✨', label: t('其他'), color: 'text-stone-600 bg-stone-100 border-stone-200' },
                   };
                   const renderAiAdvice = () => {
                     if (!activity.ai_advice) return null;
@@ -2339,7 +2341,7 @@ export default function App() {
                           className="mt-3 p-3 bg-amber-50/60 rounded-xl text-[11px] border border-amber-100">
                           <div className="flex items-center gap-2 mb-1.5">
                             <Sparkles size={10} className="text-amber-500" />
-                            <span className="text-amber-700 font-bold text-[10px] uppercase tracking-wide">AI 建議</span>
+                            <span className="text-amber-700 font-bold text-[10px] uppercase tracking-wide">{t('AI 建議')}</span>
                             <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full border", meta.color)}>{meta.icon} {meta.label}</span>
                           </div>
                           {p.headline && <p className="font-bold text-stone-700 mb-1.5">{p.headline}</p>}
@@ -2359,7 +2361,7 @@ export default function App() {
                         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
                           className="mt-3 p-3 bg-amber-50/60 rounded-xl text-[11px] text-stone-600 border border-amber-100 italic">
                           <div className="flex items-center gap-1 mb-1 text-amber-600 font-bold not-italic">
-                            <Sparkles size={10} /> AI 建議
+                            <Sparkles size={10} /> {t('AI 建議')}
                           </div>
                           {activity.ai_advice}
                         </motion.div>
@@ -2399,7 +2401,7 @@ export default function App() {
                           >
                             <div className="flex items-center justify-between mb-3">
                               <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", isOutbound ? "bg-blue-100 text-blue-600" : "bg-violet-100 text-violet-600")}>
-                                {isOutbound ? '✈ 去程' : '✈ 回程'}
+                                {isOutbound ? t('✈ 去程') : t('✈ 回程')}
                               </span>
                               <span className="text-xs font-black text-zinc-700 tracking-widest">{flightParsed?.flightNo ?? activity.activity.slice(0, 10)}</span>
                               <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", isOutbound ? "bg-blue-100 text-blue-600" : "bg-violet-100 text-violet-600")}>
@@ -2471,7 +2473,7 @@ export default function App() {
                                   <a href={activity.map_url} target="_blank" rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
                                     className="flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700 hover:underline">
-                                    <MapPin size={11} /> 查看地圖
+                                    <MapPin size={11} /> {t('查看地圖')}
                                   </a>
                                 </div>
                               )}
@@ -2487,7 +2489,7 @@ export default function App() {
                               onClick={e => e.stopPropagation()}
                               className="inline-flex items-center gap-1.5 text-xs text-stone-400 bg-stone-50 px-3 py-1 rounded-full border border-stone-100 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200 transition-colors">
                               <span>{modeIcon}</span>
-                              <span>{activity.travel_time_to_next ?? <span className="animate-pulse">計算中...</span>}</span>
+                              <span>{activity.travel_time_to_next ?? <span className="animate-pulse">{t('計算中...')}</span>}</span>
                               <MapPin size={10} className="opacity-50" />
                             </a>
                           </div>
@@ -2525,7 +2527,7 @@ export default function App() {
                   onClick={() => { setIsAddingExpense(true); setFabOpen(false); }}
                   className="flex items-center gap-2 bg-white text-zinc-800 px-4 py-2.5 rounded-2xl shadow-lg border border-zinc-200 font-bold text-sm active:scale-95 whitespace-nowrap"
                 >
-                  <Wallet size={15} /> 新增記帳
+                  <Wallet size={15} /> {t('新增記帳')}
                 </motion.button>
                 <motion.button
                   key="activity"
@@ -2535,7 +2537,7 @@ export default function App() {
                   onClick={() => { setIsAddingActivity(true); setFabOpen(false); }}
                   className="flex items-center gap-2 bg-zinc-900 text-white px-4 py-2.5 rounded-2xl shadow-lg font-bold text-sm active:scale-95 whitespace-nowrap"
                 >
-                  <Plus size={15} /> 新增行程
+                  <Plus size={15} /> {t('新增行程')}
                 </motion.button>
               </>
             )}
@@ -2590,29 +2592,29 @@ export default function App() {
       {/* Modals */}
       <AnimatePresence>
         {isAddingTrip && (
-          <Modal title="建立新旅程" onClose={() => setIsAddingTrip(false)}>
+          <Modal title={t('建立新旅程')} onClose={() => setIsAddingTrip(false)}>
             <form onSubmit={handleCreateTrip} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">旅程名稱</label>
-                <input name="name" required className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none" placeholder="例如：東京 2025" />
+                <label className="block text-sm font-medium text-zinc-700 mb-1">{t('旅程名稱')}</label>
+                <input name="name" required className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-zinc-900 outline-none" placeholder={t('例如：東京 2025')} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">開始日期</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">{t('開始日期')}</label>
                   <input name="start_date" type="date" required className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">結束日期</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">{t('結束日期')}</label>
                   <input name="end_date" type="date" required className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">國家</label>
+                <label className="block text-sm font-medium text-zinc-700 mb-1">{t('國家')}</label>
                 <DestinationPicker name="country" value={newTripCountry} onChange={setNewTripCountry} />
               </div>
               {currentUser?.role === 'admin' && allUsers.length > 0 && (
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">指派旅伴 (可多選)</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">{t('指派旅伴 (可多選)')}</label>
                   <div className="max-h-32 overflow-y-auto p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2">
                     {allUsers.filter(u => u.id !== currentUser.id).map(user => (
                       <label key={user.id} className="flex items-center gap-2 text-sm">
@@ -2623,7 +2625,7 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">確認建立</button>
+              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{t('確認建立')}</button>
             </form>
           </Modal>
         )}
@@ -2640,14 +2642,15 @@ export default function App() {
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="bg-white p-8 rounded-3xl shadow-xl border border-zinc-200 w-full max-w-md"
+              className="relative bg-white p-8 rounded-3xl shadow-xl border border-zinc-200 w-full max-w-md"
             >
+              <div className="absolute top-4 right-4"><LangToggle /></div>
               <div className="text-center mb-8">
                 <div className="w-16 h-16 bg-zinc-900 text-white rounded-2xl flex items-center justify-center mx-auto mb-4">
                   <Sparkles size={32} />
                 </div>
-                <h2 className="text-2xl font-bold text-zinc-900">旅程規劃助手</h2>
-                <p className="text-sm text-zinc-400 mt-2">請登入以開始規劃您的旅程</p>
+                <h2 className="text-2xl font-bold text-zinc-900">{t('旅程規劃助手')}</h2>
+                <p className="text-sm text-zinc-400 mt-2">{t('請登入以開始規劃您的旅程')}</p>
               </div>
 
               <div className="space-y-4">
@@ -2660,12 +2663,11 @@ export default function App() {
                   {loading
                     ? <Loader2 size={18} className="animate-spin" />
                     : <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.8-.4-4H24v7.6h11.9c-.2 2-1.5 5-4.4 7l6.7 5.2c4-3.7 6.9-9.1 6.9-15.8z"/><path fill="#34A853" d="M24 46c6 0 11.1-2 14.8-5.4l-6.7-5.2c-1.9 1.3-4.5 2.2-8.1 2.2-6.2 0-11.5-4.1-13.4-9.8l-7 5.4C7.3 40.8 15 46 24 46z"/><path fill="#FBBC05" d="M10.6 27.8c-.5-1.4-.8-2.9-.8-4.5s.3-3.1.8-4.5l-7-5.4C2.6 16.5 2 20.1 2 23.3s.6 6.8 1.6 9.9l7-5.4z"/><path fill="#EA4335" d="M24 9.8c4.4 0 7.3 1.9 9 3.5l6.1-6C35.3 3.8 30 1.5 24 1.5 15 1.5 7.3 6.7 3.6 13.4l7 5.4C12.5 13.9 17.8 9.8 24 9.8z"/></svg>}
-                  使用 Google 登入
+                  {t('使用 Google 登入')}
                 </button>
               </div>
               <p className="text-[10px] text-zinc-400 text-center mt-6">
-                第一次登入會自動建立帳號。行程的讀寫權限由 Firestore 規則依你的
-                Google 帳號判定，所以登入是必要的，不只是為了記住你是誰。
+                {t('第一次登入會自動建立帳號。行程的讀寫權限由 Firestore 規則依你的 Google 帳號判定，所以登入是必要的，不只是為了記住你是誰。')}
               </p>
             </motion.div>
           </div>
@@ -2674,22 +2676,20 @@ export default function App() {
         {/* AI Chat Button */}
 
         {isUserManagementOpen && (
-          <Modal title="使用者管理" onClose={() => setIsUserManagementOpen(false)}>
+          <Modal title={t('使用者管理')} onClose={() => setIsUserManagementOpen(false)}>
             <div className="space-y-6">
               <p className="text-xs text-zinc-500 leading-relaxed bg-zinc-50 border border-zinc-100 rounded-xl p-3">
-                成員無法從這裡新增 —— 每個人自己用 Google 登入一次就會出現在下面的清單裡，
-                之後才能被加進行程的旅伴。權限一律是「user」，要升成 admin 只能在 Firebase
-                console 改，這是規則本身擋的，不是介面沒做。
+                {t('成員無法從這裡新增 —— 每個人自己用 Google 登入一次就會出現在下面的清單裡，之後才能被加進行程的旅伴。權限一律是「user」，要升成 admin 只能在 Firebase console 改，這是規則本身擋的，不是介面沒做。')}
               </p>
 
               <div className="space-y-3">
-                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">現有使用者</h4>
+                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">{t('現有使用者')}</h4>
                 <div className="space-y-2 max-h-60 overflow-y-auto">
                   {allUsers.map(user => (
                     <div key={user.id} className="flex items-center justify-between p-3 bg-zinc-50 border border-zinc-100 rounded-xl">
                       <div>
                         <div className="text-sm font-bold text-zinc-800">{user.username}</div>
-                        <div className="text-[10px] text-zinc-400">{user.email || '—'} · 權限：{user.role}</div>
+                        <div className="text-[10px] text-zinc-400">{user.email || '—'} · {t('權限：')}{user.role}</div>
                       </div>
                       {user.role !== 'admin' && (
                         <button onClick={() => handleDeleteUser(user.id)} className="p-2 text-zinc-300 hover:text-red-500 transition-colors">
@@ -2705,13 +2705,13 @@ export default function App() {
         )}
 
         {isManagingBuddies && tripToManage && (
-          <Modal title={`管理旅伴: ${tripToManage.name}`} onClose={() => {
+          <Modal title={t('管理旅伴: {name}', { name: tripToManage.name })} onClose={() => {
             setIsManagingBuddies(false);
             setTripToManage(null);
           }}>
             <form onSubmit={handleUpdateBuddies} className="space-y-6">
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-3">選擇要加入此旅程的成員</label>
+                <label className="block text-sm font-medium text-zinc-700 mb-3">{t('選擇要加入此旅程的成員')}</label>
                 <div className="max-h-60 overflow-y-auto p-4 bg-zinc-50 border border-zinc-200 rounded-2xl space-y-3">
                   {allUsers.filter(u => u.id !== currentUser?.id).map(user => (
                     <label key={user.id} className="flex items-center justify-between p-2 hover:bg-white rounded-lg transition-colors cursor-pointer">
@@ -2731,7 +2731,7 @@ export default function App() {
                     </label>
                   ))}
                   {allUsers.length <= 1 && (
-                    <p className="text-center py-4 text-xs text-zinc-400">尚無其他使用者可供指派</p>
+                    <p className="text-center py-4 text-xs text-zinc-400">{t('尚無其他使用者可供指派')}</p>
                   )}
                 </div>
               </div>
@@ -2741,13 +2741,13 @@ export default function App() {
                   onClick={() => { setIsManagingBuddies(false); setTripToManage(null); }}
                   className="flex-1 py-3 bg-zinc-100 text-zinc-600 rounded-xl font-bold"
                 >
-                  取消
+                  {t('取消')}
                 </button>
                 <button 
                   type="submit" 
                   className="flex-[2] py-3 bg-zinc-900 text-white rounded-xl font-bold shadow-lg"
                 >
-                  儲存變更
+                  {t('儲存變更')}
                 </button>
               </div>
             </form>
@@ -2755,7 +2755,7 @@ export default function App() {
         )}
 
         {isAddingActivity && (
-          <Modal title="新增行程" onClose={() => {
+          <Modal title={t('新增行程')} onClose={() => {
             setIsAddingActivity(false);
             setShowAiActivityInput(false);
             setAiActivityText('');
@@ -2766,10 +2766,10 @@ export default function App() {
                   onClick={() => setShowAiActivityInput(!showAiActivityInput)}
                   className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-50 text-zinc-600 rounded-xl font-bold border border-zinc-200 hover:bg-zinc-100 transition-colors"
                 >
-                  <Sparkles size={18} className="text-purple-500" /> AI 智慧匯入 (文字)
+                  <Sparkles size={18} className="text-purple-500" /> {t('AI 智慧匯入 (文字)')}
                 </button>
                 <label className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-50 text-zinc-600 rounded-xl font-bold border border-zinc-200 cursor-pointer hover:bg-zinc-100 transition-colors">
-                  <Camera size={18} className="text-blue-500" /> 拍照匯入
+                  <Camera size={18} className="text-blue-500" /> {t('拍照匯入')}
                   <input type="file" className="hidden" accept="image/*" onChange={handleScanActivity} />
                 </label>
               </div>
@@ -2779,7 +2779,7 @@ export default function App() {
                   <textarea 
                     autoFocus
                     className="w-full p-3 rounded-lg border border-zinc-200 focus:border-zinc-400 outline-none text-sm min-h-[100px]"
-                    placeholder="請貼上訂位確認信、行程文字或任何旅遊資訊..."
+                    placeholder={t('請貼上訂位確認信、行程文字或任何旅遊資訊...')}
                     value={aiActivityText}
                     onChange={(e) => setAiActivityText(e.target.value)}
                   />
@@ -2789,7 +2789,7 @@ export default function App() {
                     className="w-full py-2 bg-zinc-900 text-white rounded-lg font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {loading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                    開始解析
+                    {t('開始解析')}
                   </button>
                 </motion.div>
               )}
@@ -2797,14 +2797,14 @@ export default function App() {
 
             <form name="activityForm" onSubmit={handleAddActivity} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">日期</label>
+                <label className="block text-sm font-medium text-zinc-700 mb-1">{t('日期')}</label>
                 <select name="date" defaultValue={getDateRange().includes(activeTab) ? activeTab : getDateRange()[0]} className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
                   {getDateRange().map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">開始時間</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">{t('開始時間')}</label>
                   <select
                     name="start_time"
                     required
@@ -2816,7 +2816,7 @@ export default function App() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-zinc-700 mb-1">結束時間 (預設+2小時)</label>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">{t('結束時間 (預設+2小時)')}</label>
                   <select
                     name="end_time"
                     required
@@ -2829,32 +2829,32 @@ export default function App() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">活動名稱</label>
-                <input name="activity" className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" placeholder="例如：淺草寺 (若留空將嘗試從地圖連結自動填入)" />
+                <label className="block text-sm font-medium text-zinc-700 mb-1">{t('活動名稱')}</label>
+                <input name="activity" className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" placeholder={t('例如：淺草寺 (若留空將嘗試從地圖連結自動填入)')} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">Google Maps 連結 (選填)</label>
+                <label className="block text-sm font-medium text-zinc-700 mb-1">{t('Google Maps 連結 (選填)')}</label>
                 <input name="map_url" className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" placeholder="https://maps.google.com/..." />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">交通方式 (前往此地)</label>
+                <label className="block text-sm font-medium text-zinc-700 mb-1">{t('交通方式 (前往此地)')}</label>
                 <select name="travel_mode" className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl">
-                  <option value="transit">大眾運輸</option>
-                  <option value="walking">步行</option>
-                  <option value="driving">駕車</option>
+                  <option value="transit">{t('大眾運輸')}</option>
+                  <option value="walking">{t('步行')}</option>
+                  <option value="driving">{t('駕車')}</option>
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-700 mb-1">備註</label>
-                <textarea name="note" className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl h-20" placeholder="想吃什麼、看什麼..." />
+                <label className="block text-sm font-medium text-zinc-700 mb-1">{t('備註')}</label>
+                <textarea name="note" className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl h-20" placeholder={t('想吃什麼、看什麼...')} />
               </div>
-              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">加入行程</button>
+              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{t('加入行程')}</button>
             </form>
           </Modal>
         )}
 
         {isAddingFlight && (
-          <Modal title="新增航班" onClose={() => {
+          <Modal title={t('新增航班')} onClose={() => {
             setIsAddingFlight(false);
             setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '', departureTimeZone: '', arrivalTimeZone: '' });
             setShowAiInput(false);
@@ -2866,10 +2866,10 @@ export default function App() {
                   onClick={() => setShowAiInput(!showAiInput)}
                   className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-50 text-zinc-600 rounded-xl font-bold border border-zinc-200"
                 >
-                  <Sparkles size={18} /> 文字填入
+                  <Sparkles size={18} /> {t('文字填入')}
                 </button>
                 <label className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-50 text-zinc-600 rounded-xl font-bold border border-zinc-200 cursor-pointer">
-                  <Camera size={18} /> 拍照填入
+                  <Camera size={18} /> {t('拍照填入')}
                   <input type="file" className="hidden" accept="image/*" onChange={handleScanFlight} />
                 </label>
               </div>
@@ -2879,7 +2879,7 @@ export default function App() {
                   <textarea 
                     autoFocus
                     className="w-full p-3 rounded-lg border border-zinc-200 focus:border-zinc-400 outline-none text-sm min-h-[100px]"
-                    placeholder="請貼上航班資訊文字..."
+                    placeholder={t('請貼上航班資訊文字...')}
                     value={aiInputText}
                     onChange={(e) => setAiInputText(e.target.value)}
                   />
@@ -2909,14 +2909,14 @@ export default function App() {
                     }}
                     className="w-full py-2 bg-zinc-900 text-white rounded-lg font-bold shadow-sm"
                   >
-                    AI 辨識
+                    {t('AI 辨識')}
                   </button>
                 </motion.div>
               )}
             </div>
             <form onSubmit={handleAddFlight} className="space-y-4">
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">航班號</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('航班號')}</label>
                 <input 
                   name="flightNo" 
                   required 
@@ -2927,7 +2927,7 @@ export default function App() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">日期</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('日期')}</label>
                 <select 
                   name="date" 
                   value={flightForm.date}
@@ -2939,7 +2939,7 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">出發機場</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('出發機場')}</label>
                   <input 
                     name="departureAirport" 
                     required 
@@ -2950,7 +2950,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">抵達機場</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('抵達機場')}</label>
                   <input 
                     name="arrivalAirport" 
                     required 
@@ -2963,30 +2963,30 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">出發時區</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('出發時區')}</label>
                   <select
                     value={flightForm.departureTimeZone || (selectedTrip ? (TIMEZONE_MAP[selectedTrip.country] ?? 'Asia/Taipei') : 'Asia/Taipei')}
                     onChange={(e) => setFlightForm({...flightForm, departureTimeZone: e.target.value})}
                     className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   >
-                    {TIME_ZONE_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                    {TIME_ZONE_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{t(tz.label)}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">抵達時區</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('抵達時區')}</label>
                   <select
                     value={flightForm.arrivalTimeZone || (selectedTrip ? (TIMEZONE_MAP[selectedTrip.country] ?? 'Asia/Taipei') : 'Asia/Taipei')}
                     onChange={(e) => setFlightForm({...flightForm, arrivalTimeZone: e.target.value})}
                     className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   >
-                    {TIME_ZONE_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                    {TIME_ZONE_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{t(tz.label)}</option>)}
                   </select>
                 </div>
               </div>
-              <p className="text-xs text-zinc-400 -mt-2">起飛與抵達時間各自填當地時間，就是機票上印的那個。</p>
+              <p className="text-xs text-zinc-400 -mt-2">{t('起飛與抵達時間各自填當地時間，就是機票上印的那個。')}</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">起飛時間</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('起飛時間')}</label>
                   <input 
                     name="departureTime" 
                     type="time" 
@@ -2997,7 +2997,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">抵達時間</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('抵達時間')}</label>
                   <input 
                     name="arrivalTime" 
                     type="time" 
@@ -3008,13 +3008,13 @@ export default function App() {
                   />
                 </div>
               </div>
-              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">確認航班</button>
+              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{t('確認航班')}</button>
             </form>
           </Modal>
         )}
 
         {isAddingAccommodation && (
-          <Modal title="新增住宿" onClose={() => {
+          <Modal title={t('新增住宿')} onClose={() => {
             setIsAddingAccommodation(false);
             setAccommodationForm({ name: '', address: '', check_in: '', check_out: '' });
             setShowAiInput(false);
@@ -3026,10 +3026,10 @@ export default function App() {
                   onClick={() => setShowAiInput(!showAiInput)}
                   className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-50 text-zinc-600 rounded-xl font-bold border border-zinc-200"
                 >
-                  <Sparkles size={18} /> 文字填入
+                  <Sparkles size={18} /> {t('文字填入')}
                 </button>
                 <label className="flex-1 flex items-center justify-center gap-2 py-3 bg-zinc-50 text-zinc-600 rounded-xl font-bold border border-zinc-200 cursor-pointer">
-                  <Camera size={18} /> 拍照填入
+                  <Camera size={18} /> {t('拍照填入')}
                   <input type="file" className="hidden" accept="image/*" onChange={handleScanAccommodation} />
                 </label>
               </div>
@@ -3039,7 +3039,7 @@ export default function App() {
                   <textarea 
                     autoFocus
                     className="w-full p-3 rounded-lg border border-zinc-200 focus:border-zinc-400 outline-none text-sm min-h-[100px]"
-                    placeholder="請貼上住宿資訊文字..."
+                    placeholder={t('請貼上住宿資訊文字...')}
                     value={aiInputText}
                     onChange={(e) => setAiInputText(e.target.value)}
                   />
@@ -3065,14 +3065,14 @@ export default function App() {
                     }}
                     className="w-full py-2 bg-zinc-900 text-white rounded-lg font-bold shadow-sm"
                   >
-                    AI 辨識
+                    {t('AI 辨識')}
                   </button>
                 </motion.div>
               )}
             </div>
             <form onSubmit={handleAddAccommodation} className="space-y-4">
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">飯店名稱</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('飯店名稱')}</label>
                 <input 
                   name="name" 
                   required 
@@ -3083,7 +3083,7 @@ export default function App() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">飯店地址</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('飯店地址')}</label>
                 <input 
                   name="address" 
                   required 
@@ -3094,7 +3094,7 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">入住日期</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('入住日期')}</label>
                   <input 
                     name="check_in" 
                     type="date" 
@@ -3105,7 +3105,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">退房日期</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('退房日期')}</label>
                   <input 
                     name="check_out" 
                     type="date" 
@@ -3116,13 +3116,13 @@ export default function App() {
                   />
                 </div>
               </div>
-              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">確認住宿</button>
+              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{t('確認住宿')}</button>
             </form>
           </Modal>
         )}
 
         {isAddingExpense && (
-          <Modal title={editingExpense ? '編輯支出' : '新增花費'} onClose={() => {
+          <Modal title={editingExpense ? t('編輯支出') : t('新增花費')} onClose={() => {
             setIsAddingExpense(false);
             setEditingExpense(null);
             setExpenseForm({ description: '', amount: '', currency: 'USD', category: '飲食', date: format(new Date(), 'yyyy-MM-dd') });
@@ -3132,7 +3132,7 @@ export default function App() {
                 <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-zinc-200 rounded-2xl bg-zinc-50 cursor-pointer hover:bg-zinc-100 transition-colors">
                   <div className="flex flex-col items-center justify-center pt-5 pb-6">
                     <Camera className="w-8 h-8 mb-2 text-zinc-400" />
-                    <p className="text-sm font-bold text-zinc-500">拍照辨識收據 (AI)</p>
+                    <p className="text-sm font-bold text-zinc-500">{t('拍照辨識收據 (AI)')}</p>
                   </div>
                   <input type="file" className="hidden" accept="image/*" onChange={handleScanReceipt} />
                 </label>
@@ -3140,19 +3140,19 @@ export default function App() {
             )}
             <form onSubmit={handleAddExpense} className="space-y-4">
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">款項敘述</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('款項敘述')}</label>
                 <input 
                   name="description" 
                   required 
                   value={expenseForm.description}
                   onChange={(e) => setExpenseForm({...expenseForm, description: e.target.value})}
                   className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none" 
-                  placeholder="例如：拉麵" 
+                  placeholder={t('例如：拉麵')} 
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">金額</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('金額')}</label>
                   <input 
                     name="amount" 
                     type="number" 
@@ -3165,21 +3165,21 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">幣值</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('幣值')}</label>
                   <select 
                     name="currency" 
                     value={expenseForm.currency}
                     onChange={(e) => setExpenseForm({...expenseForm, currency: e.target.value})}
                     className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   >
-                    {CURRENCY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                    {CURRENCY_OPTIONS.map(c => <option key={c} value={c}>{t(c)}</option>)}
                     <option value="TWD">TWD</option>
                   </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">日期</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('日期')}</label>
                   <input 
                     name="date" 
                     type="date" 
@@ -3190,27 +3190,27 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">類別</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('類別')}</label>
                   <select 
                     name="category" 
                     value={expenseForm.category}
                     onChange={(e) => setExpenseForm({...expenseForm, category: e.target.value})}
                     className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   >
-                    {["交通", "住宿", "飲食", "購物", "其他"].map(c => <option key={c} value={c}>{c}</option>)}
+                    {["交通", "住宿", "飲食", "購物", "其他"].map(c => <option key={c} value={c}>{t(c)}</option>)}
                   </select>
                 </div>
               </div>
-              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{editingExpense ? '儲存變更' : '確認記帳'}</button>
+              <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{editingExpense ? t('儲存變更') : t('確認記帳')}</button>
             </form>
           </Modal>
         )}
 
         {isExportModalOpen && (
-          <Modal title="匯出行程表" onClose={() => setIsExportModalOpen(false)}>
+          <Modal title={t('匯出行程表')} onClose={() => setIsExportModalOpen(false)}>
             <div className="space-y-6">
               <div className="p-4 bg-zinc-50 rounded-2xl border border-zinc-100">
-                <p className="text-sm text-zinc-600 mb-4">選擇匯出方式，與您的旅伴分享這趟完美的旅程。</p>
+                <p className="text-sm text-zinc-600 mb-4">{t('選擇匯出方式，與您的旅伴分享這趟完美的旅程。')}</p>
                 
                 <button 
                   onClick={handleDownloadPDF}
@@ -3222,8 +3222,8 @@ export default function App() {
                       <Download size={20} />
                     </div>
                     <div className="text-left">
-                      <div className="text-sm font-bold text-zinc-900">下載 PDF</div>
-                      <div className="text-[10px] text-zinc-400">儲存到您的裝置</div>
+                      <div className="text-sm font-bold text-zinc-900">{t('下載 PDF')}</div>
+                      <div className="text-[10px] text-zinc-400">{t('儲存到您的裝置')}</div>
                     </div>
                   </div>
                   {isGeneratingPdf && <Loader2 size={16} className="animate-spin text-zinc-400" />}
@@ -3231,15 +3231,15 @@ export default function App() {
 
                 <div className="relative py-4">
                   <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-200"></div></div>
-                  <div className="relative flex justify-center text-[10px] uppercase font-bold text-zinc-400"><span className="bg-zinc-50 px-2">或</span></div>
+                  <div className="relative flex justify-center text-[10px] uppercase font-bold text-zinc-400"><span className="bg-zinc-50 px-2">{t('或')}</span></div>
                 </div>
 
                 <div className="space-y-3">
-                  <div className="text-sm font-bold text-zinc-900">發送郵件</div>
+                  <div className="text-sm font-bold text-zinc-900">{t('發送郵件')}</div>
                   <div className="flex gap-2">
                     <input 
                       type="email" 
-                      placeholder="輸入電子信箱..." 
+                      placeholder={t('輸入電子信箱...')} 
                       value={exportEmail}
                       onChange={(e) => setExportEmail(e.target.value)}
                       className="flex-1 p-3 bg-white border border-zinc-200 rounded-xl text-sm outline-none focus:border-zinc-900"
@@ -3249,7 +3249,7 @@ export default function App() {
                       disabled={isSendingEmail || !exportEmail}
                       className="px-6 bg-zinc-900 text-white rounded-xl font-bold text-sm disabled:opacity-50 flex items-center gap-2"
                     >
-                      {isSendingEmail ? <Loader2 size={16} className="animate-spin" /> : '發送'}
+                      {isSendingEmail ? <Loader2 size={16} className="animate-spin" /> : t('發送')}
                     </button>
                   </div>
                 </div>
@@ -3259,10 +3259,10 @@ export default function App() {
         )}
 
         {editingActivity && (
-          <Modal title="編輯行程" onClose={() => setEditingActivity(null)}>
+          <Modal title={t('編輯行程')} onClose={() => setEditingActivity(null)}>
             <form onSubmit={handleUpdateActivity} className="space-y-4">
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">行程名稱</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('行程名稱')}</label>
                 <input 
                   value={editingActivity.activity} 
                   onChange={e => setEditingActivity({...editingActivity, activity: e.target.value})}
@@ -3271,7 +3271,7 @@ export default function App() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">日期</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('日期')}</label>
                 <input
                   type="date"
                   value={editingActivity.date}
@@ -3284,7 +3284,7 @@ export default function App() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">開始時間</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('開始時間')}</label>
                   <input
                     type="time"
                     value={editingActivity.start_time}
@@ -3294,7 +3294,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-zinc-600 mb-1">結束時間</label>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1">{t('結束時間')}</label>
                   <input
                     type="time"
                     value={editingActivity.end_time}
@@ -3305,7 +3305,7 @@ export default function App() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">Google Map 連結</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('Google Map 連結')}</label>
                 <input
                   value={editingActivity.map_url || ''}
                   onChange={e => setEditingActivity({...editingActivity, map_url: e.target.value})}
@@ -3315,7 +3315,7 @@ export default function App() {
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-sm font-bold text-zinc-600">封面照片</label>
+                  <label className="text-sm font-bold text-zinc-600">{t('封面照片')}</label>
                   <button
                     type="button"
                     onClick={() => {
@@ -3326,7 +3326,7 @@ export default function App() {
                     }}
                     className="flex items-center gap-1 text-xs text-purple-600 font-bold hover:text-purple-800 transition-colors"
                   >
-                    <Sparkles size={11} /> AI 搜尋照片
+                    <Sparkles size={11} /> {t('AI 搜尋照片')}
                   </button>
                 </div>
                 {editingActivity.photo_url && (
@@ -3343,11 +3343,11 @@ export default function App() {
                   value={editingActivity.photo_url || ''}
                   onChange={e => setEditingActivity({...editingActivity, photo_url: e.target.value})}
                   className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none text-xs"
-                  placeholder="貼上圖片 URL，或點「AI 搜尋照片」自動取得"
+                  placeholder={t('貼上圖片 URL，或點「AI 搜尋照片」自動取得')}
                 />
               </div>
               <div>
-                <label className="block text-sm font-bold text-zinc-600 mb-1">備註</label>
+                <label className="block text-sm font-bold text-zinc-600 mb-1">{t('備註')}</label>
                 <textarea 
                   value={editingActivity.note || ''} 
                   onChange={e => setEditingActivity({...editingActivity, note: e.target.value})}
@@ -3358,7 +3358,7 @@ export default function App() {
               {!editingActivity.is_flight && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="text-sm font-bold text-zinc-600">AI 建議</label>
+                    <label className="text-sm font-bold text-zinc-600">{t('AI 建議')}</label>
                     <button
                       type="button"
                       onClick={async () => {
@@ -3370,7 +3370,7 @@ export default function App() {
                       }}
                       className="flex items-center gap-1 text-xs text-amber-600 font-bold hover:text-amber-800 transition-colors"
                     >
-                      <Sparkles size={11} /> 重新生成 AI 建議
+                      <Sparkles size={11} /> {t('重新生成 AI 建議')}
                     </button>
                   </div>
                   {editingActivity.ai_advice && (() => {
@@ -3391,14 +3391,14 @@ export default function App() {
                 </div>
               )}
               <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg transition-all">
-                更新行程
+                {t('更新行程')}
               </button>
             </form>
           </Modal>
         )}
 
         {isExpenseAnalysisOpen && selectedTrip && (
-          <Modal title="支出分析 (TWD)" onClose={() => setIsExpenseAnalysisOpen(false)}>
+          <Modal title={t('支出分析 (TWD)')} onClose={() => setIsExpenseAnalysisOpen(false)}>
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-3">
                 {["交通", "住宿", "飲食", "購物", "其他"].map(cat => {
@@ -3417,7 +3417,7 @@ export default function App() {
                   return (
                     <div key={cat} className="bg-zinc-50 p-4 rounded-2xl border border-zinc-200">
                       <div className="flex items-center gap-2 text-zinc-400 mb-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider">{cat}</span>
+                        <span className="text-[10px] font-bold uppercase tracking-wider">{t(cat)}</span>
                       </div>
                       <div className="text-lg font-bold text-zinc-900">${Math.round(catTotalTWD).toLocaleString()}</div>
                       <div className="w-full bg-zinc-200 h-1 rounded-full mt-2 overflow-hidden">
@@ -3430,7 +3430,7 @@ export default function App() {
               </div>
 
               <div className="space-y-3">
-                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">所有支出明細</h4>
+                <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">{t('所有支出明細')}</h4>
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                   {[...expenses].sort((a, b) => b.date.localeCompare(a.date)).map((e) => {
                     const rate = EXCHANGE_RATES[e.currency] || 1;
@@ -3440,7 +3440,7 @@ export default function App() {
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           <div>
                             <div className="text-xs font-bold text-zinc-800 truncate">{e.description}</div>
-                            <div className="text-[9px] text-zinc-400">{e.date} · {e.category} · {e.amount} {e.currency}</div>
+                            <div className="text-[9px] text-zinc-400">{e.date} · {t(e.category)} · {e.amount} {e.currency}</div>
                           </div>
                         </div>
                         <div className="flex items-center gap-2 ml-2 shrink-0">
@@ -3465,7 +3465,7 @@ export default function App() {
               </div>
 
               <div className="bg-zinc-900 text-white p-5 rounded-2xl shadow-lg">
-                <div className="text-[10px] font-bold uppercase opacity-60 mb-1">總計支出 (TWD)</div>
+                <div className="text-[10px] font-bold uppercase opacity-60 mb-1">{t('總計支出 (TWD)')}</div>
                 <div className="text-2xl font-bold">${Math.round(expenses.reduce((sum, e) => {
                   const rate = EXCHANGE_RATES[e.currency] || 1;
                   return sum + (e.amount * rate);
@@ -3492,7 +3492,7 @@ export default function App() {
         <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-[100] flex items-center justify-center">
           <div className="bg-white p-6 rounded-2xl shadow-xl flex flex-col items-center gap-3">
             <Loader2 className="animate-spin text-zinc-900" size={32} />
-            <p className="text-sm font-bold text-zinc-900">AI 正在處理中...</p>
+            <p className="text-sm font-bold text-zinc-900">{t('AI 正在處理中...')}</p>
           </div>
         </div>
       )}

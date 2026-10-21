@@ -1,6 +1,14 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { getLang } from "../i18n";
 
 const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
+
+/**
+ * The language AI-written text comes back in: whatever the person asking has
+ * the UI set to. Results that are stored (advice, travel times, idea notes)
+ * keep the language of whoever generated them; regenerating rewrites them.
+ */
+const outLang = () => (getLang() === 'en' ? 'English' : '繁體中文');
 
 export const geminiService = {
   async getItineraryAdvice(spotName: string, country: string): Promise<string> {
@@ -18,7 +26,7 @@ export const geminiService = {
 - shopping（商店/百貨/市場）：招牌或限定商品、價位、必買清單
 - other（其他）：最實用的訪客建議
 
-每條 tips 25字以內，繁體中文。`,
+headline 與每條 tips 都用 ${outLang()}，tips 每條 25 字以內（英文約 15 words）。`,
       config: { responseMimeType: "application/json" },
     });
     return response.text?.trim() || '';
@@ -230,7 +238,7 @@ export const geminiService = {
     };
 
     const cleaned = activityName.replace(/[\u{1F000}-\u{1FFFF}]/gu, '').trim();
-    const jpSegments = (cleaned.match(/[\u3040-\u30FF\u4E00-\u9FFF][\u3040-\u30FF\u4E00-\u9FFF\s]*/g) || []);
+    const jpSegments: string[] = (cleaned.match(/[\u3040-\u30FF\u4E00-\u9FFF][\u3040-\u30FF\u4E00-\u9FFF\s]*/g) || []);
     const bestJp = jpSegments.sort((a, b) => b.length - a.length)[0]?.trim();
     if (bestJp) {
       const jaPhoto = await tryWikipedia('ja', bestJp);
@@ -263,7 +271,7 @@ ${schedule}
 
 請根據行程安排（考慮地點順路性、時間空檔），推薦一個最適合的地點。
 只回傳以下 JSON，不加任何說明或 markdown：
-{"place":"地點完整名稱（保留日文/英文原名）","area":"所在區域或最近地鐵站","suggestedTime":"建議前往時間 HH:MM","reason":"為何選此時段與地點（30字以內，繁體中文）","mapQuery":"適合 Google Maps 搜尋的字串"}`,
+{"place":"地點完整名稱（保留日文/英文原名）","area":"所在區域或最近地鐵站","suggestedTime":"建議前往時間 HH:MM","reason":"為何選此時段與地點（30字以內，${outLang()}）","mapQuery":"適合 Google Maps 搜尋的字串"}`,
       config: { responseMimeType: "application/json" },
     });
     return response.text?.trim() || '';
@@ -274,7 +282,7 @@ ${schedule}
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: `請估算在${country}，從「${origin}」到「${destination}」，以${modeText}方式的交通時間和距離。
-      請以繁體中文簡短回答，只回傳以下格式的文字，不需要其他說明：「約X分鐘 (X.Xkm)」
+      只回傳以下格式的文字，不需要其他說明：${getLang() === 'en' ? '「~X min (X.X km)」' : '「約X分鐘 (X.Xkm)」'}
       如果步行距離少於1公里則建議步行。`,
     });
     return response.text?.trim() || '';
@@ -316,7 +324,7 @@ ${countryLines}
 7. 住宿只有在文件明確提到旅館／營地名稱時才填。check_in_day / check_out_day 是第幾天（數字）。
 8. checklist 只收「出發前要自己準備或攜帶的東西」—— 轉接頭、藥品、衣物、簽證、要先預約的項目之類，一項一句、寫成待辦的口氣。
    **不要**把「此行程不包含 X」「費用不含 Y」這種排除項寫進 checklist：那是報價範圍，不是你要準備的東西，放進來會讓清單變成一串不能勾掉的句子。同理，也不要收錄行程當天才發生的事（那些已經在 activities 裡）。沒有就給空陣列。
-9. 全部用繁體中文輸出，地名與旅館名可以保留原文。`;
+9. 全部用${outLang()}輸出，地名與旅館名可以保留原文。`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
@@ -397,8 +405,8 @@ ${countryLines}
 1. 只收**具體的地點**（店名、景點名、設施名）。不要收城市名、區域名、交通方式、或「可以逛逛街」這種沒有指名的描述。
 2. 地點名稱保留當地原文（日文漢字、英文店名照抄），不要翻譯成中文。
 3. 文章提到但**作者沒有推薦**的（例如「這家我們沒去」「只是轉車經過」），不要收。
-4. note 用繁體中文寫一句話，說明為什麼值得去 —— 從原文擷取重點，不要自己編造原文沒有的賣點。
-5. duration 給一個合理的停留時間估計（例如「30 分鐘」「1-2 小時」「半天」）。
+4. note 用${outLang()}寫一句話，說明為什麼值得去 —— 從原文擷取重點，不要自己編造原文沒有的賣點。
+5. duration 用${outLang()}給一個合理的停留時間估計（例如「30 分鐘」「1-2 小時」「半天」）。
 6. area 填所在區域或最近的車站；原文沒寫就依你的知識補，不確定就留空字串。
 7. 最多 15 個。寧可少，不要硬湊。${already}
 
@@ -419,7 +427,7 @@ ${text.slice(0, 20000)}
                   title: { type: Type.STRING, description: "地點名稱，保留原文" },
                   category: { type: Type.STRING, description: "restaurant | cafe | landmark | shopping | other" },
                   area: { type: Type.STRING, description: "區域或最近車站；不確定就空字串" },
-                  note: { type: Type.STRING, description: "一句話說明為何值得去，繁體中文，30 字內" },
+                  note: { type: Type.STRING, description: `一句話說明為何值得去，${outLang()}，30 字內` },
                   duration: { type: Type.STRING, description: "建議停留時間，例如 1-2 小時" },
                 },
                 required: ["title", "category", "note"],
@@ -478,7 +486,7 @@ ${stash}
 1. ref 填上面清單的**編號數字**（1、2、3…），不要填地點名稱。
 2. 真的找不到合適的日子就不要列入，列得少沒關係。
 3. 同一天不要塞超過兩個新地點。
-4. reason 用繁體中文，35 字以內，要講出具體理由（順路、那天空、時段合適），不要講空話。`,
+4. reason 用${outLang()}，35 字以內，要講出具體理由（順路、那天空、時段合適），不要講空話。`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -492,7 +500,7 @@ ${stash}
                   ref: { type: Type.NUMBER, description: "收藏清單的編號，從 1 開始" },
                   date: { type: Type.STRING, description: "YYYY-MM-DD，必須落在旅程日期範圍內" },
                   suggestedTime: { type: Type.STRING, description: "建議時間 HH:MM" },
-                  reason: { type: Type.STRING, description: "繁體中文，35 字內" },
+                  reason: { type: Type.STRING, description: `${outLang()}，35 字內` },
                 },
                 required: ["ref", "date", "reason"],
               },
@@ -520,7 +528,7 @@ ${stash}
 
       請根據現有的行程安排，分析時間空檔、地理位置順路程度，給出具體的建議。
       如果建議安排在某一天，請說明原因（例如：那天剛好在附近、那天行程較鬆等）。
-      請用繁體中文回答，語氣親切專業。`,
+      請用${outLang()}回答，語氣親切專業。`,
     });
     return response.text;
   },
