@@ -27,7 +27,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, settleUp, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -410,6 +410,8 @@ export default function App() {
     date: format(new Date(), 'yyyy-MM-dd')
   });
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+  const [splitPaidBy, setSplitPaidBy] = useState('');
+  const [splitWith, setSplitWith] = useState<string[]>([]);
 
   const openEditExpense = (expense: Expense) => {
     setEditingExpense(expense);
@@ -420,6 +422,8 @@ export default function App() {
       category: expense.category,
       date: expense.date,
     });
+    setSplitPaidBy(expense.paid_by || '');
+    setSplitWith(expense.split_with || []);
     setIsAddingExpense(true);
   };
 
@@ -1177,6 +1181,10 @@ export default function App() {
       amount: parseFloat(formData.get('amount') as string),
       currency: formData.get('currency') as string,
       date: expenseForm.date,
+      // Written even when empty so editing an expense can un-split it.
+      ...(tripMembers.length > 1
+        ? { paid_by: splitWith.length > 0 ? splitPaidBy : '', split_with: splitWith }
+        : {}),
     };
     if (editingExpense) {
       await updateDoc(doc(db, 'expenses', editingExpense.id), fields);
@@ -1760,6 +1768,54 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
+  /**
+   * Profiles of everyone on any loaded trip, by uid.
+   *
+   * Fetched per uid rather than the whole users collection, which only admins
+   * subscribe to: a regular member still needs to see who else is on the trip.
+   * The rules let any signed-in user read a profile. Cached across trips and
+   * only ever grown, so moving between trips costs nothing.
+   */
+  const [profiles, setProfiles] = useState<Record<string, User>>({});
+  useEffect(() => {
+    const ids = new Set<string>();
+    trips.forEach(tr => {
+      if (tr.owner_id) ids.add(tr.owner_id);
+      tr.shared_with?.forEach(id => ids.add(id));
+    });
+    const missing = [...ids].filter(id => !profiles[id]);
+    if (missing.length === 0) return;
+    Promise.all(
+      missing.map(id =>
+        getDoc(doc(db, 'users', id))
+          .then(s => (s.exists() ? ({ ...(s.data() as Omit<User, 'id'>), id } as User) : null))
+          .catch(() => null),
+      ),
+    ).then(rows =>
+      setProfiles(p => {
+        const next = { ...p };
+        rows.forEach(r => { if (r) next[r.id] = r; });
+        return next;
+      }),
+    );
+  }, [trips]);
+
+  /** Owner first, then the people it is shared with. A deleted profile is left out. */
+  const membersOf = (trip: Trip): User[] =>
+    [trip.owner_id, ...(trip.shared_with ?? [])]
+      .filter((id, i, all) => id && all.indexOf(id) === i)
+      .map(id => profiles[id])
+      .filter((u): u is User => Boolean(u));
+  const tripMembers = selectedTrip ? membersOf(selectedTrip) : [];
+  const nameOf = (uid: string) => profiles[uid]?.username || '—';
+
+  const openNewExpense = () => {
+    setEditingExpense(null);
+    setSplitPaidBy(currentUser?.id || '');
+    setSplitWith(tripMembers.length > 1 ? tripMembers.map(u => u.id) : []);
+    setIsAddingExpense(true);
+  };
+
   const getDateRange = () => {
     if (!selectedTrip) return [];
     const start = parseISO(selectedTrip.start_date);
@@ -1917,6 +1973,12 @@ export default function App() {
               <p className="text-sm text-zinc-500 mt-1 flex items-center gap-1">
                 <Calendar size={14} className="text-zinc-400" /> {trip.start_date} ~ {trip.end_date}
               </p>
+              {membersOf(trip).length > 0 && (
+                <p className="text-xs text-zinc-500 mt-1 flex items-center gap-1">
+                  <Users size={13} className="text-zinc-400 flex-shrink-0" />
+                  <span className="truncate">{membersOf(trip).map(u => u.username.split(' ')[0]).join(', ')}</span>
+                </p>
+              )}
               <div className="flex flex-wrap gap-1.5 mt-2">
                 <span className="px-2 py-0.5 bg-white/70 text-zinc-700 text-[10px] font-bold rounded-full border border-white/80 tracking-wide">
                   {theme.flagEmoji} {trip.country}
@@ -2102,6 +2164,7 @@ export default function App() {
               checklist={checklist}
               ideas={ideas}
               currentUser={currentUser}
+              members={tripMembers}
               onJumpToDay={setActiveTab}
               onOpenExpenses={() => { setShowTotalExpense(true); setIsExpenseAnalysisOpen(true); }}
               onAddAccommodation={() => setIsAddingAccommodation(true)}
@@ -2575,7 +2638,7 @@ export default function App() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 10, scale: 0.9 }}
                   transition={{ delay: 0.04 }}
-                  onClick={() => { setIsAddingExpense(true); setFabOpen(false); }}
+                  onClick={() => { openNewExpense(); setFabOpen(false); }}
                   className="flex items-center gap-2 bg-white text-zinc-800 px-4 py-2.5 rounded-2xl shadow-lg border border-zinc-200 font-bold text-sm active:scale-95 whitespace-nowrap"
                 >
                   <Wallet size={15} /> {t('新增記帳')}
@@ -3252,6 +3315,58 @@ export default function App() {
                   </select>
                 </div>
               </div>
+              {tripMembers.length > 1 && (
+                <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm font-bold text-zinc-600 flex-shrink-0">{t('付款人')}</label>
+                    <select
+                      value={splitPaidBy}
+                      onChange={(e) => setSplitPaidBy(e.target.value)}
+                      className="flex-1 p-2 bg-white border border-zinc-200 rounded-lg text-sm"
+                    >
+                      {tripMembers.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-sm font-bold text-zinc-600">{t('平分給')}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSplitWith(splitWith.length === tripMembers.length ? [] : tripMembers.map(u => u.id))}
+                        className="text-[11px] font-bold text-zinc-400 hover:text-zinc-800"
+                      >
+                        {splitWith.length === tripMembers.length ? t('全部取消') : t('全選')}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {tripMembers.map(u => {
+                        const on = splitWith.includes(u.id);
+                        return (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => setSplitWith(on ? splitWith.filter(id => id !== u.id) : [...splitWith, u.id])}
+                            className={cn(
+                              "text-xs font-bold px-2.5 py-1 rounded-full border transition-colors",
+                              on ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-400 border-zinc-200",
+                            )}
+                          >
+                            {u.username.split(' ')[0]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-1.5">
+                      {splitWith.length === 0
+                        ? t('不分帳，只記錄這筆支出')
+                        : t('每人 {amt} {cur}', {
+                            amt: (Number(expenseForm.amount || 0) / splitWith.length).toFixed(2),
+                            cur: expenseForm.currency,
+                          })}
+                    </p>
+                  </div>
+                </div>
+              )}
               <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{editingExpense ? t('儲存變更') : t('確認記帳')}</button>
             </form>
           </Modal>
@@ -3486,6 +3601,9 @@ export default function App() {
                           <div>
                             <div className="text-xs font-bold text-zinc-800 truncate">{e.description}</div>
                             <div className="text-[9px] text-zinc-400">{e.date} · {t(e.category)} · {e.amount} {e.currency}</div>
+                            {e.paid_by && e.split_with && e.split_with.length > 0 && (
+                              <div className="text-[9px] text-zinc-400">{t('{name} 付款 · {n} 人平分', { name: nameOf(e.paid_by), n: e.split_with.length })}</div>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2 ml-2 shrink-0">
@@ -3508,6 +3626,48 @@ export default function App() {
                   })}
                 </div>
               </div>
+
+              {(() => {
+                const split = expenses.filter(e => e.paid_by && e.split_with && e.split_with.length > 0);
+                if (split.length === 0) return null;
+                const balances: Record<string, number> = {};
+                for (const e of split) {
+                  const amt = toCur(e);
+                  balances[e.paid_by!] = (balances[e.paid_by!] || 0) + amt;
+                  for (const id of e.split_with!) balances[id] = (balances[id] || 0) - amt / e.split_with!.length;
+                }
+                const transfers = settleUp(balances);
+                return (
+                  <div className="space-y-3">
+                    <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">{t('分帳結算 ({cur})', { cur })}</h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.entries(balances).map(([id, v]) => (
+                        <div key={id} className="flex items-center justify-between p-2.5 bg-zinc-50 border border-zinc-100 rounded-xl">
+                          <span className="text-xs font-bold text-zinc-700 truncate">{nameOf(id)}</span>
+                          <span className={cn("text-xs font-bold tabular-nums", v > 0.5 ? "text-emerald-600" : v < -0.5 ? "text-red-500" : "text-zinc-400")}>
+                            {v > 0.5 ? '+' : v < -0.5 ? '−' : ''}${Math.round(Math.abs(v)).toLocaleString()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {transfers.length === 0 ? (
+                      <p className="text-xs text-zinc-400">{t('已經兩清')}</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {transfers.map((tr, i) => (
+                          <div key={i} className="flex items-center justify-between p-2.5 bg-white border border-zinc-100 rounded-xl text-xs">
+                            <span className="text-zinc-700">
+                              <span className="font-bold">{nameOf(tr.from)}</span> → <span className="font-bold">{nameOf(tr.to)}</span>
+                            </span>
+                            <span className="font-bold text-zinc-900 tabular-nums">${Math.round(tr.amount).toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-zinc-400">{t('只計入有勾選平分對象的支出。+ 代表別人欠他，− 代表他要付。')}</p>
+                  </div>
+                );
+              })()}
 
               <div className="bg-zinc-900 text-white p-5 rounded-2xl shadow-lg">
                 <div className="text-[10px] font-bold uppercase opacity-60 mb-1">{t('總計支出 ({cur})', { cur })}</div>

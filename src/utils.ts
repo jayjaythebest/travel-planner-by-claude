@@ -273,6 +273,30 @@ export function totalsCurrency(country: string): 'TWD' | 'USD' {
   return CURRENCY_MAP[country] === 'TWD' ? 'TWD' : 'USD';
 }
 
+/**
+ * Who pays whom to settle a set of net balances (positive = is owed).
+ *
+ * Greedy largest-debtor-to-largest-creditor, which keeps the number of
+ * transfers at most n-1. Amounts under one unit are dropped as rounding noise.
+ */
+export function settleUp(balances: Record<string, number>): { from: string; to: string; amount: number }[] {
+  const debtors = Object.entries(balances).filter(([, v]) => v < -0.5).map(([id, v]) => ({ id, v: -v }));
+  const creditors = Object.entries(balances).filter(([, v]) => v > 0.5).map(([id, v]) => ({ id, v }));
+  debtors.sort((a, b) => b.v - a.v);
+  creditors.sort((a, b) => b.v - a.v);
+  const out: { from: string; to: string; amount: number }[] = [];
+  let i = 0, j = 0;
+  while (i < debtors.length && j < creditors.length) {
+    const amount = Math.min(debtors[i].v, creditors[j].v);
+    if (amount > 0.5) out.push({ from: debtors[i].id, to: creditors[j].id, amount });
+    debtors[i].v -= amount;
+    creditors[j].v -= amount;
+    if (debtors[i].v <= 0.5) i++;
+    if (creditors[j].v <= 0.5) j++;
+  }
+  return out;
+}
+
 /** Convert through EXCHANGE_RATES, which are TWD per unit. */
 export function convertAmount(amount: number, from: string, to: string): number {
   return (amount * (EXCHANGE_RATES[from] || 1)) / (EXCHANGE_RATES[to] || 1);

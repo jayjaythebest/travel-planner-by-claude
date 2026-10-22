@@ -41,6 +41,8 @@ export interface Trip {
 export interface SuggestedDay {
   date: string;
   title: string;
+  /** One or two sentences on why the day is shaped this way. */
+  summary?: string;
   stops: SuggestedStop[];
 }
 
@@ -109,6 +111,14 @@ export interface Expense {
   amount: number;
   currency: string;
   date: string;
+  /**
+   * Splitting. `paid_by` is the uid who paid; `split_with` the uids it is
+   * shared equally among (the payer included if they had a share). Both absent
+   * or empty means the expense is not split and stays out of settle-up — every
+   * expense recorded before splitting existed is in that state.
+   */
+  paid_by?: string;
+  split_with?: string[];
 }
 
 export interface ChecklistItem {

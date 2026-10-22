@@ -100,6 +100,9 @@ function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (sto
           {t('全部加入行程')}
         </button>
       </div>
+      {day.summary && (
+        <p className="text-[10px] text-violet-900/60 leading-relaxed mb-2 italic">{day.summary}</p>
+      )}
       <ul className="space-y-1">
         {pending.map(s => (
           <li key={s.id} className="flex items-start gap-2">
@@ -139,6 +142,7 @@ export function TripOverview({
   checklist,
   ideas,
   currentUser,
+  members,
   onJumpToDay,
   onOpenExpenses,
   onAddAccommodation,
@@ -153,6 +157,7 @@ export function TripOverview({
   checklist: ChecklistItem[];
   ideas: Idea[];
   currentUser: User | null;
+  members: User[];
   onJumpToDay: (date: string) => void;
   onOpenExpenses: () => void;
   onAddAccommodation: () => void;
@@ -260,6 +265,24 @@ export function TripOverview({
             <MapPin size={11} />
             <span className="text-[11px] font-bold uppercase tracking-wider">{trip.country}</span>
           </div>
+          {members.length > 0 && (
+            <div className="flex items-center gap-2 mt-3">
+              <div className="flex -space-x-1.5">
+                {members.slice(0, 6).map(u => (
+                  <div
+                    key={u.id}
+                    title={u.username}
+                    className="w-6 h-6 rounded-full bg-white/15 border border-zinc-800 flex items-center justify-center text-[10px] font-bold"
+                  >
+                    {u.username.charAt(0).toUpperCase()}
+                  </div>
+                ))}
+              </div>
+              <span className="text-[11px] text-white/60 truncate">
+                {members.map(u => u.username.split(' ')[0]).join(', ')}
+              </span>
+            </div>
+          )}
           <div className="flex items-center gap-4 mt-4 pt-4 border-t border-white/10">
             <div>
               <div className="text-[9px] font-bold text-white/40 uppercase tracking-widest">{t('出發')}</div>

@@ -129,6 +129,8 @@ export function IdeaStash({
   const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState('');
   const [viewer, setViewer] = useState<IdeaPhoto | null>(null);
+  /** Category the list is narrowed to from the summary row; null shows all. */
+  const [filter, setFilter] = useState<Idea['category'] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   /** Which idea the shared hidden file input is currently picking for. */
   const uploadTargetRef = useRef<string | null>(null);
@@ -145,6 +147,10 @@ export function IdeaStash({
   const photosFor = (ideaId: string) => photos.filter(p => p.idea_id === ideaId);
 
   const open = ideas.filter(i => i.status !== 'scheduled');
+  const counts = (Object.keys(CATEGORY_META) as Idea['category'][])
+    .map(k => ({ k, n: open.filter(i => (CATEGORY_META[i.category] ? i.category : 'other') === k).length }))
+    .filter(c => c.n > 0);
+  const shown = filter ? open.filter(i => (CATEGORY_META[i.category] ? i.category : 'other') === filter) : open;
   const scheduled = ideas.filter(i => i.status === 'scheduled');
 
   const mapUrlFor = (title: string, area?: string) =>
@@ -432,6 +438,28 @@ export function IdeaStash({
             <Plus size={11} /> {t('手動新增')}
           </button>
         </div>
+
+        {counts.length > 1 && (
+          <div className="flex gap-1.5 flex-wrap mt-3">
+            {counts.map(({ k, n }) => (
+              <button
+                key={k}
+                onClick={() => setFilter(filter === k ? null : k)}
+                className={cn(
+                  'text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors',
+                  filter === k ? CATEGORY_META[k].chip : filter ? 'bg-white text-zinc-300 border-zinc-100' : CATEGORY_META[k].chip,
+                )}
+              >
+                {CATEGORY_META[k].icon} {t(CATEGORY_META[k].label)} {n}
+              </button>
+            ))}
+            {filter && (
+              <button onClick={() => setFilter(null)} className="text-[10px] font-bold text-zinc-400 hover:text-zinc-700 px-1">
+                {t('顯示全部')}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* ── Paste + extract ── */}
@@ -622,7 +650,7 @@ export function IdeaStash({
           </div>
         )}
 
-        {open.map(idea => {
+        {shown.map(idea => {
           const meta = CATEGORY_META[idea.category] || CATEGORY_META.other;
           const sug = suggestions[idea.id];
           const isScheduling = schedulingId === idea.id;
