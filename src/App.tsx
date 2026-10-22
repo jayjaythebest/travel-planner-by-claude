@@ -27,7 +27,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, settleUp, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, settleUp, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -36,6 +36,7 @@ import { Modal } from './components/Modal';
 import { ImportItineraryModal, type ImportDraft } from './components/ImportItineraryModal';
 import { DestinationPicker } from './components/DestinationPicker';
 import { TripOverview } from './components/TripOverview';
+import { MemberChips } from './components/MemberChips';
 import { syncTripToCalendar, CalendarError } from './services/googleCalendar';
 import { t, useLang, LangToggle } from './i18n';
 import { 
@@ -411,6 +412,7 @@ export default function App() {
   });
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [splitPaidBy, setSplitPaidBy] = useState('');
+  const [flightPassengers, setFlightPassengers] = useState<string[]>([]);
   const [splitWith, setSplitWith] = useState<string[]>([]);
 
   const openEditExpense = (expense: Expense) => {
@@ -1122,9 +1124,31 @@ export default function App() {
     const departureZone = flightForm.departureTimeZone || tripZone;
     const arrivalZone = flightForm.arrivalTimeZone || tripZone;
 
+    const passengers = flightPassengers.length > 0 ? flightPassengers : currentUser ? [currentUser.id] : [];
+
+    // Someone else already entered this flight: join it rather than adding a
+    // second card for the same plane.
+    const existing = activities.find(
+      a => a.is_flight && a.date === date && flightNoOf(a.activity) === flightNo.trim().toUpperCase(),
+    );
+    if (existing) {
+      const current = existing.passengers ?? tripMembers.map(u => u.id);
+      const merged = [...new Set([...current, ...passengers])];
+      try {
+        await updateDoc(doc(db, 'activities', existing.id), { passengers: merged });
+        setCalendarMessage(t('{no} 已經有人登記，已把乘客加進這班', { no: flightNo.trim().toUpperCase() }));
+        setIsAddingFlight(false);
+        setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '', departureTimeZone: '', arrivalTimeZone: '' });
+      } catch (err) {
+        console.error(err);
+      }
+      return;
+    }
+
     const newActivity = {
       id: crypto.randomUUID(),
       trip_id: selectedTrip.id,
+      passengers,
       date,
       start_time: departureTime,
       end_time: arrivalTime,
@@ -1809,6 +1833,24 @@ export default function App() {
   const tripMembers = selectedTrip ? membersOf(selectedTrip) : [];
   const nameOf = (uid: string) => profiles[uid]?.username || '—';
 
+  useEffect(() => {
+    if (isAddingFlight) setFlightPassengers(currentUser ? [currentUser.id] : []);
+  }, [isAddingFlight]);
+
+  /** "I'm on this one" / "I'm not" on a flight card. */
+  const toggleOnFlight = async (a: Activity) => {
+    if (!currentUser) return;
+    const current = a.passengers ?? tripMembers.map(u => u.id);
+    const next = current.includes(currentUser.id)
+      ? current.filter(id => id !== currentUser.id)
+      : [...current, currentUser.id];
+    try {
+      await updateDoc(doc(db, 'activities', a.id), { passengers: next });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const openNewExpense = () => {
     setEditingExpense(null);
     setSplitPaidBy(currentUser?.id || '');
@@ -2418,11 +2460,9 @@ export default function App() {
                   const next = currentActivities[idx + 1];
 
                   // Flight card helpers
-                  const allFlightsSorted = activities
-                    .filter(a => a.is_flight)
-                    .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time));
-                  const flightGlobalIdx = allFlightsSorted.findIndex(f => f.id === activity.id);
-                  const isOutbound = flightGlobalIdx < Math.ceil(allFlightsSorted.length / 2);
+                  const isOutbound = isOutboundDate(activity.date, selectedTrip!.start_date, selectedTrip!.end_date);
+                  const passengerIds = activity.passengers ?? tripMembers.map(u => u.id);
+                  const onThisFlight = !!currentUser && passengerIds.includes(currentUser.id);
                   const flightParsed = activity.is_flight ? parseFlightActivity(activity.activity) : null;
                   const flightDuration = activity.is_flight ? calcFlightDuration(activity.start_time, activity.end_time) : null;
                   const depCode = flightParsed ? getAirportCode(flightParsed.departure) : '???';
@@ -2544,6 +2584,23 @@ export default function App() {
                               <span className="text-[10px] text-zinc-400 font-medium">{activity.date}</span>
                               <span className="text-sm font-bold text-zinc-800">{activity.end_time}</span>
                             </div>
+                            {tripMembers.length > 1 && (
+                              <div className="flex items-center justify-between gap-2 mt-3 pt-2.5 border-t border-dashed border-zinc-200">
+                                <span className="text-[10px] text-zinc-500 truncate">
+                                  <Users size={10} className="inline mr-1 -mt-0.5" />
+                                  {passengerIds.length > 0 ? passengerIds.map(id => nameOf(id).split(' ')[0]).join(', ') : t('還沒有人')}
+                                </span>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleOnFlight(activity); }}
+                                  className={cn(
+                                    "text-[10px] font-bold px-2 py-0.5 rounded-full border flex-shrink-0 transition-colors",
+                                    onThisFlight ? "bg-white text-zinc-400 border-zinc-200 hover:text-red-500" : "bg-zinc-900 text-white border-zinc-900",
+                                  )}
+                                >
+                                  {onThisFlight ? t('我不搭這班') : t('我也搭這班')}
+                                </button>
+                              </div>
+                            )}
                             <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(activity.id); }}
                               className="absolute top-3 right-3 p-1.5 text-zinc-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
                               <X size={14} />
@@ -3122,6 +3179,13 @@ export default function App() {
                   />
                 </div>
               </div>
+              {tripMembers.length > 1 && (
+                <div>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1.5">{t('誰搭這班')}</label>
+                  <MemberChips members={tripMembers} value={flightPassengers} onChange={setFlightPassengers} />
+                  <p className="text-[11px] text-zinc-400 mt-1.5">{t('同一班已經有人登記的話，會直接把乘客加進那班。')}</p>
+                </div>
+              )}
               <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{t('確認航班')}</button>
             </form>
           </Modal>
@@ -3520,6 +3584,16 @@ export default function App() {
                   className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl focus:border-zinc-400 outline-none min-h-[100px]" 
                 />
               </div>
+              {editingActivity.is_flight && tripMembers.length > 1 && (
+                <div>
+                  <label className="block text-sm font-bold text-zinc-600 mb-1.5">{t('誰搭這班')}</label>
+                  <MemberChips
+                    members={tripMembers}
+                    value={editingActivity.passengers ?? tripMembers.map(u => u.id)}
+                    onChange={ids => setEditingActivity({ ...editingActivity, passengers: ids })}
+                  />
+                </div>
+              )}
               {/* AI Advice preview + regenerate */}
               {!editingActivity.is_flight && (
                 <div>

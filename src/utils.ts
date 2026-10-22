@@ -297,6 +297,22 @@ export function settleUp(balances: Record<string, number>): { from: string; to: 
   return out;
 }
 
+/** The flight number in a stored "✈️ 航班: BR198 (…)" activity, upper-cased. */
+export function flightNoOf(activity: string): string | undefined {
+  return activity.match(/航班:\s*([^\s(]+)/)?.[1]?.toUpperCase();
+}
+
+/**
+ * Whether a flight on `date` is a way there rather than a way home: it falls in
+ * the first half of the trip. Decided per flight rather than by its position in
+ * the list, because travellers flying in from different cities make "the first
+ * half of all flights" mean nothing.
+ */
+export function isOutboundDate(date: string, start: string, end: string): boolean {
+  const s = Date.parse(start);
+  return Date.parse(date) <= s + (Date.parse(end) - s) / 2;
+}
+
 /** Convert through EXCHANGE_RATES, which are TWD per unit. */
 export function convertAmount(amount: number, from: string, to: string): number {
   return (amount * (EXCHANGE_RATES[from] || 1)) / (EXCHANGE_RATES[to] || 1);

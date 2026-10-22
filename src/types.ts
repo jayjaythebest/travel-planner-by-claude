@@ -91,6 +91,12 @@ export interface Activity {
    */
   start_tz?: string;
   end_tz?: string;
+  /**
+   * Flights only: uids of the travellers on this flight. Absent means everyone
+   * on the trip — the state of every flight added before this existed, and the
+   * honest reading of a flight added when the trip had one traveller.
+   */
+  passengers?: string[];
 }
 
 export interface Accommodation {

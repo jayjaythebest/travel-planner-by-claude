@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
-import { cn, convertAmount, totalsCurrency } from '../utils';
+import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay } from '../types';
 import { IdeaStash } from './IdeaStash';
 import { t, useLang, getLang } from '../i18n';
@@ -234,8 +234,21 @@ export function TripOverview({
       actionLabel: t('新增住宿'),
     });
   }
+  // A flight with no passenger list predates the list and counts for everyone.
+  const flightsOf = (uid: string) =>
+    flights
+      .filter(f => !f.passengers || f.passengers.includes(uid))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time));
+  const noFlight = members.length > 1 ? members.filter(u => flightsOf(u.id).length === 0) : [];
   if (flights.length === 0) {
     warnings.push({ icon: <Plane size={12} />, text: t('還沒有登記航班'), action: onAddFlight, actionLabel: t('新增航班') });
+  } else if (noFlight.length > 0) {
+    warnings.push({
+      icon: <Plane size={12} />,
+      text: t('{names} 還沒登記航班', { names: noFlight.map(u => u.username.split(' ')[0]).join(t('、')) }),
+      action: onAddFlight,
+      actionLabel: t('新增航班'),
+    });
   }
   if (emptyDays.length > 0) {
     warnings.push({
@@ -482,6 +495,49 @@ export function TripOverview({
                   <ChevronRight size={14} className="text-zinc-300 flex-shrink-0" />
                 </button>
               ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Who is on which flight ── */}
+      {members.length > 1 && flights.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('誰搭哪一班')}</h3>
+          <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
+            {members.map(u => {
+              const mine = flightsOf(u.id);
+              return (
+                <div key={u.id} className="flex items-start gap-3 p-3">
+                  <div className="w-7 h-7 rounded-full bg-zinc-100 flex items-center justify-center text-[11px] font-bold text-zinc-500 flex-shrink-0">
+                    {u.username.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-zinc-800">{u.username}</div>
+                    {mine.length === 0 ? (
+                      <div className="text-[10px] text-amber-600 mt-0.5">{t('還沒登記航班')}</div>
+                    ) : (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {mine.map(f => {
+                          const out = isOutboundDate(f.date, trip.start_date, trip.end_date);
+                          return (
+                            <button
+                              key={f.id}
+                              onClick={() => onJumpToDay(f.date)}
+                              className={cn(
+                                'text-[10px] font-bold px-1.5 py-0.5 rounded-md border tabular-nums',
+                                out ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-violet-50 text-violet-600 border-violet-100',
+                              )}
+                            >
+                              {out ? t('去') : t('回')} {flightNoOf(f.activity) ?? '✈'} · {format(parseISO(f.date), 'M/d')} {f.start_time}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
