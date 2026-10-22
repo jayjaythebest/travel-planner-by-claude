@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { getLang } from "../i18n";
+import { countryCode } from "../utils";
 
 const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
 
@@ -172,6 +173,67 @@ headline 與每條 tips 都用 ${outLang()}，tips 每條 25 字以內（英文�
       },
     });
     return JSON.parse(response.text || "{}");
+  },
+
+  /**
+   * A cover photo for a whole trip: the best-known sight of the place it is
+   * mainly about, verified to be in the trip's country.
+   *
+   * The check is on the Places result's country component, not on text: a
+   * search for a landmark name alone can land on a same-named restaurant in
+   * another country, and a cover of the wrong nation is worse than none. When
+   * the specific landmark fails, "<country> famous landmark" is the fallback.
+   */
+  async getCoverPhoto(tripName: string, country: string): Promise<string> {
+    const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+    if (!mapsKey) return '';
+    const countryEn = country.match(/\(([^)]+)\)/)?.[1] || country;
+    const code = countryCode(country);
+
+    let landmark = '';
+    try {
+      const q = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: `旅程名稱：「${tripName}」，國家：${countryEn}。
+這趟旅程主要去的是哪個城市或地區？請回傳一行英文 Google Maps 搜尋字串，指向那裡最具代表性、最適合當旅程封面照的地標或自然景觀——跟旅程主題相符（登山行程就選那座山，城市行程就選代表性建築）。例如 "Palacio de Bellas Artes, Mexico City"、"Mount Kilimanjaro"。只回傳搜尋字串，不要任何說明。`,
+      });
+      landmark = (q.text?.trim() || '').replace(/\s+/g, ' ').slice(0, 150);
+    } catch (err) {
+      console.warn('[cover] landmark query failed', err);
+    }
+
+    for (const textQuery of [landmark, `${countryEn} famous landmark`].filter(Boolean)) {
+      try {
+        const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': mapsKey,
+            'X-Goog-FieldMask': 'places.photos,places.addressComponents',
+          },
+          body: JSON.stringify({ textQuery, languageCode: 'en', maxResultCount: 3 }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) continue;
+        const places: any[] = (await res.json()).places ?? [];
+        const place = places.find(p =>
+          p.photos?.length &&
+          (!code || p.addressComponents?.some((c: any) => c.types?.includes('country') && c.shortText === code)),
+        );
+        if (!place) continue;
+        const photoRes = await fetch(
+          `https://places.googleapis.com/v1/${place.photos[0].name}/media?maxWidthPx=1200&skipHttpRedirect=true&key=${mapsKey}`,
+          { signal: AbortSignal.timeout(8000) },
+        );
+        if (photoRes.ok) {
+          const uri = (await photoRes.json()).photoUri;
+          if (uri) return uri as string;
+        }
+      } catch (err) {
+        console.warn('[cover] places lookup failed', err);
+      }
+    }
+    return '';
   },
 
   async getActivityPhoto(activityName: string, country: string): Promise<string> {

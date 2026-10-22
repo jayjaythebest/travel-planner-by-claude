@@ -1,7 +1,7 @@
 """
 Restaurant reservation relay: Travel Planner <-> Gmail <-> Muse.
 
-Runs hourly as a Cloud Run Job. Per run, for every trip that has not ended and
+Runs every 10 minutes as a Cloud Run Job. Per run, for every trip that has not ended and
 has `reservations_enabled` switched on in the app:
 
 1. Read Muse's replies on that trip's [muse定位串] thread, have Gemini turn each

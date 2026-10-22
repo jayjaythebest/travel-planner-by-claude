@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
-import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate } from '../utils';
+import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate, flagUrl } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation } from '../types';
 import { IdeaStash, isInReservations } from './IdeaStash';
 import { Section, useCollapsed } from './Section';
@@ -264,7 +264,7 @@ function Reservations({ ideas, trip, onToggle }: { ideas: Idea[]; trip: Trip; on
             </div>
           )}
           <p className="text-[10px] text-zinc-400">
-            {!trip.reservations_enabled ? t('還沒開啟。開啟後每小時檢查一次，有新的店就寄信給 Muse。') : t('每小時自動寄信給 Muse 並讀回覆 · 上次寄出 {sent} · 上次回覆 {reply}', {
+            {!trip.reservations_enabled ? t('還沒開啟。開啟後每 10 分鐘檢查一次，有新的店就寄信給 Muse。') : t('每 10 分鐘讀取 Muse 的回覆 · 上次寄出 {sent} · 上次回覆 {reply}', {
               sent: when(thread?.last_request_at),
               reply: when(thread?.last_reply_at),
             })}
@@ -291,6 +291,7 @@ export function TripOverview({
   onAddFlight,
   onImportSuggestion,
   onToggleReservations,
+  onCoverError,
 }: {
   trip: Trip;
   dates: string[];
@@ -307,6 +308,7 @@ export function TripOverview({
   onAddFlight: () => void;
   onImportSuggestion: (date: string, stopIds: string[]) => Promise<void>;
   onToggleReservations: (on: boolean) => Promise<void>;
+  onCoverError: () => void;
 }) {
   useLang();
   const today = new Date();
@@ -411,15 +413,29 @@ export function TripOverview({
         animate={{ opacity: 1, y: 0 }}
         className="relative overflow-hidden rounded-3xl border border-zinc-200 bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900 p-5 text-white"
       >
-        <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full bg-white/[0.04]" />
-        <div className="absolute -right-2 bottom-[-3rem] w-28 h-28 rounded-full bg-white/[0.03]" />
+        {trip.cover_url ? (
+          <>
+            <img src={trip.cover_url} alt="" onError={onCoverError} className="absolute inset-0 w-full h-full object-cover" />
+            {/* Dark at the bottom where the dates sit, lighter at the top so the photo still reads. */}
+            <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-black/45 to-black/80" />
+          </>
+        ) : (
+          <>
+            <div className="absolute -right-8 -top-8 w-40 h-40 rounded-full bg-white/[0.04]" />
+            <div className="absolute -right-2 bottom-[-3rem] w-28 h-28 rounded-full bg-white/[0.03]" />
+          </>
+        )}
         <div className="relative">
           <span className={cn('inline-block text-[10px] font-bold px-2.5 py-1 rounded-full border', status.tone)}>
             {status.label}
           </span>
           <h2 className="text-2xl font-black mt-2.5 leading-tight">{trip.name}</h2>
           <div className="flex items-center gap-1.5 mt-1.5 text-white/50">
-            <MapPin size={11} />
+            {flagUrl(trip.country) ? (
+              <img src={flagUrl(trip.country)!} alt="" className="w-4 h-3 object-cover rounded-[2px] shadow-sm" />
+            ) : (
+              <MapPin size={11} />
+            )}
             <span className="text-[11px] font-bold uppercase tracking-wider">{trip.country}</span>
           </div>
           {members.length > 0 && (

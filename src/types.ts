@@ -31,6 +31,8 @@ export interface Trip {
    * Imported stops are flagged rather than removed so a half-imported day
    * cannot offer the same stop twice.
    */
+  /** Destination photo for the overview header, fetched once and cached here. */
+  cover_url?: string;
   /** Opt-in: the reservation-agent only emails Muse about trips with this on. */
   reservations_enabled?: boolean;
   /** Headcount for bookings; falls back to the number of members. */

@@ -198,6 +198,88 @@ if (import.meta.env.DEV) {
 
 export const COUNTRY_LIST: string[] = DESTINATIONS.map((d) => d.label);
 
+/**
+ * ISO 3166 alpha-2 code per destination label, for flag images.
+ *
+ * Images rather than flag emoji because Windows ships no flag glyphs: Chrome
+ * there renders 🇲🇽 as the two letters "MX".
+ */
+const COUNTRY_CODE: Record<string, string> = {
+  "台灣 (Taiwan)": "tw",
+  "日本 (Japan)": "jp",
+  "韓國 (South Korea)": "kr",
+  "中國 (China)": "cn",
+  "香港 (Hong Kong)": "hk",
+  "澳門 (Macau)": "mo",
+  "蒙古 (Mongolia)": "mn",
+  "泰國 (Thailand)": "th",
+  "越南 (Vietnam)": "vn",
+  "新加坡 (Singapore)": "sg",
+  "馬來西亞 (Malaysia)": "my",
+  "印尼 (Indonesia)": "id",
+  "菲律賓 (Philippines)": "ph",
+  "柬埔寨 (Cambodia)": "kh",
+  "寮國 (Laos)": "la",
+  "緬甸 (Myanmar)": "mm",
+  "印度 (India)": "in",
+  "尼泊爾 (Nepal)": "np",
+  "斯里蘭卡 (Sri Lanka)": "lk",
+  "馬爾地夫 (Maldives)": "mv",
+  "阿聯 (UAE)": "ae",
+  "以色列 (Israel)": "il",
+  "約旦 (Jordan)": "jo",
+  "土耳其 (Türkiye)": "tr",
+  "英國 (UK)": "gb",
+  "愛爾蘭 (Ireland)": "ie",
+  "法國 (France)": "fr",
+  "德國 (Germany)": "de",
+  "荷蘭 (Netherlands)": "nl",
+  "比利時 (Belgium)": "be",
+  "瑞士 (Switzerland)": "ch",
+  "奧地利 (Austria)": "at",
+  "義大利 (Italy)": "it",
+  "西班牙 (Spain)": "es",
+  "葡萄牙 (Portugal)": "pt",
+  "希臘 (Greece)": "gr",
+  "克羅埃西亞 (Croatia)": "hr",
+  "捷克 (Czechia)": "cz",
+  "匈牙利 (Hungary)": "hu",
+  "波蘭 (Poland)": "pl",
+  "冰島 (Iceland)": "is",
+  "挪威 (Norway)": "no",
+  "瑞典 (Sweden)": "se",
+  "丹麥 (Denmark)": "dk",
+  "芬蘭 (Finland)": "fi",
+  "美國 (USA)": "us",
+  "加拿大 (Canada)": "ca",
+  "墨西哥 (Mexico)": "mx",
+  "巴西 (Brazil)": "br",
+  "阿根廷 (Argentina)": "ar",
+  "秘魯 (Peru)": "pe",
+  "智利 (Chile)": "cl",
+  "澳洲 (Australia)": "au",
+  "紐西蘭 (New Zealand)": "nz",
+  "關島 (Guam)": "gu",
+  "帛琉 (Palau)": "pw",
+  "斐濟 (Fiji)": "fj",
+  "坦尚尼亞 (Tanzania)": "tz",
+  "肯亞 (Kenya)": "ke",
+  "南非 (South Africa)": "za",
+  "摩洛哥 (Morocco)": "ma",
+  "埃及 (Egypt)": "eg",
+};
+
+/** ISO alpha-2 code for a destination label, upper-cased; null for a legacy free-text country. */
+export function countryCode(country: string): string | null {
+  return COUNTRY_CODE[country]?.toUpperCase() ?? null;
+}
+
+/** Flag image URL for a trip's country, or null for a legacy free-text country. */
+export function flagUrl(country: string): string | null {
+  const code = COUNTRY_CODE[country];
+  return code ? `https://flagcdn.com/w40/${code}.png` : null;
+}
+
 export const CURRENCY_MAP: Record<string, string> = Object.fromEntries(
   DESTINATIONS.map((d) => [d.label, d.currency]),
 );

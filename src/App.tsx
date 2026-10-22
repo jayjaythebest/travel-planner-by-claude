@@ -27,7 +27,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, settleUp, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, settleUp, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -73,6 +73,53 @@ type CountryTheme = {
 
 function getCountryTheme(country: string): CountryTheme {
   const c = (country || '').toLowerCase();
+
+  if (c.includes('mexico') || c.includes('墨西哥')) return {
+    gradient: 'linear-gradient(130deg, #ecfdf5 0%, #ffffff 55%, #fff1f2 100%)',
+    borderColor: '#bbf7d0',
+    flagEmoji: '🇲🇽',
+    landmark: (
+      <svg width="140" height="100" viewBox="0 0 140 100" fill="none">
+        <circle cx="104" cy="26" r="13" fill="#f59e0b" fillOpacity="0.16"/>
+        <circle cx="104" cy="26" r="20" fill="#f59e0b" fillOpacity="0.06"/>
+        <path d="M18 92 L30 92 L30 80 L42 80 L42 68 L54 68 L54 56 L86 56 L86 68 L98 68 L98 80 L110 80 L110 92 L122 92 L122 96 L18 96 Z" fill="#059669" fillOpacity="0.13"/>
+        <rect x="64" y="44" width="12" height="12" fill="#059669" fillOpacity="0.16"/>
+        <path d="M66 56 L74 56 L76 96 L64 96 Z" fill="#dc2626" fillOpacity="0.10"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('spain') || c.includes('西班牙') || c.includes('barcelona') || c.includes('madrid')) return {
+    gradient: 'linear-gradient(130deg, #fff7ed 0%, #ffffff 55%, #fef2f2 100%)',
+    borderColor: '#fed7aa',
+    flagEmoji: '🇪🇸',
+    landmark: (
+      <svg width="110" height="120" viewBox="0 0 110 120" fill="none">
+        <path d="M20 112 L26 40 L30 40 L36 112 Z" fill="#ea580c" fillOpacity="0.12"/>
+        <path d="M38 112 L45 22 L49 22 L56 112 Z" fill="#ea580c" fillOpacity="0.14"/>
+        <path d="M58 112 L65 18 L69 18 L76 112 Z" fill="#ea580c" fillOpacity="0.14"/>
+        <path d="M78 112 L84 40 L88 40 L94 112 Z" fill="#ea580c" fillOpacity="0.12"/>
+        <circle cx="47" cy="18" r="3" fill="#dc2626" fillOpacity="0.2"/>
+        <circle cx="67" cy="14" r="3" fill="#dc2626" fillOpacity="0.2"/>
+        <rect x="14" y="108" width="86" height="6" rx="2" fill="#ea580c" fillOpacity="0.08"/>
+      </svg>
+    )
+  };
+
+  if (c.includes('tanzania') || c.includes('坦尚尼亞') || c.includes('kenya') || c.includes('肯亞')) return {
+    gradient: 'linear-gradient(130deg, #fefce8 0%, #ffffff 55%, #ecfdf5 100%)',
+    borderColor: '#fde68a',
+    flagEmoji: '🇹🇿',
+    landmark: (
+      <svg width="140" height="90" viewBox="0 0 140 90" fill="none">
+        <path d="M10 84 L58 30 L72 40 L84 28 L132 84 Z" fill="#78716c" fillOpacity="0.13"/>
+        <path d="M50 39 L58 30 L72 40 L84 28 L92 37 L80 42 L70 46 L60 41 Z" fill="white" fillOpacity="0.85"/>
+        <path d="M112 84 L112 64" stroke="#65a30d" strokeOpacity="0.3" strokeWidth="2"/>
+        <ellipse cx="112" cy="60" rx="16" ry="5" fill="#65a30d" fillOpacity="0.2"/>
+        <rect x="4" y="82" width="132" height="5" rx="2" fill="#ca8a04" fillOpacity="0.1"/>
+      </svg>
+    )
+  };
 
   if (c.includes('japan') || c.includes('日本')) return {
     gradient: 'linear-gradient(130deg, #fff0f0 0%, #ffffff 60%)',
@@ -1028,6 +1075,29 @@ export default function App() {
     setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, suggested_plan: next } : prev));
     setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, suggested_plan: next } : tr)));
   };
+
+  /**
+   * Find a cover photo for the open trip the first time it is viewed, and keep
+   * it on the trip so nobody fetches it again. `force` refetches after the
+   * stored URL stops loading (Places photo URLs are not permanent).
+   */
+  const coverTried = React.useRef<Set<string>>(new Set());
+  const loadCover = async (trip: Trip, force = false) => {
+    if ((!force && trip.cover_url) || coverTried.current.has(trip.id + force)) return;
+    coverTried.current.add(trip.id + force);
+    try {
+      const url = await geminiService.getCoverPhoto(trip.name, trip.country);
+      if (!url) return;
+      await updateDoc(doc(db, 'trips', trip.documentId || trip.id), { cover_url: url });
+      setSelectedTrip(prev => (prev && prev.id === trip.id ? { ...prev, cover_url: url } : prev));
+      setTrips(prev => prev.map(tr => (tr.id === trip.id ? { ...tr, cover_url: url } : tr)));
+    } catch (err) {
+      console.error('cover photo', err);
+    }
+  };
+  useEffect(() => {
+    if (selectedTrip) loadCover(selectedTrip);
+  }, [selectedTrip?.id]);
 
   const handleToggleReservations = async (on: boolean) => {
     if (!selectedTrip) return;
@@ -2084,7 +2154,10 @@ export default function App() {
               )}
               <div className="flex flex-wrap gap-1.5 mt-2">
                 <span className="px-2 py-0.5 bg-white/70 text-zinc-700 text-[10px] font-bold rounded-full border border-white/80 tracking-wide">
-                  {theme.flagEmoji} {trip.country}
+                  {flagUrl(trip.country)
+                    ? <img src={flagUrl(trip.country)!} alt="" className="inline-block w-4 h-3 object-cover rounded-[2px] mr-1 -mt-0.5 shadow-sm" />
+                    : <span className="mr-0.5">{theme.flagEmoji}</span>}
+                  {trip.country}
                 </span>
                 <span className="px-2 py-0.5 bg-white/70 text-zinc-500 text-[10px] font-medium rounded-full border border-white/80">
                   {getTripNights(trip.start_date, trip.end_date)}
@@ -2274,6 +2347,7 @@ export default function App() {
               onAddFlight={() => setIsAddingFlight(true)}
               onImportSuggestion={handleImportSuggestion}
               onToggleReservations={handleToggleReservations}
+              onCoverError={() => selectedTrip && loadCover(selectedTrip, true)}
             />
           ) : (
           <>

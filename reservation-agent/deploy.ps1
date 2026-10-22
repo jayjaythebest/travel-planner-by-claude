@@ -1,4 +1,4 @@
-# Reservation relay (Travel Planner <-> Gmail <-> Muse) - Cloud Run Job, hourly.
+# Reservation relay (Travel Planner <-> Gmail <-> Muse) - Cloud Run Job, every 10 minutes.
 #
 # First time:
 #   1. py -3 -m venv venv; venv\Scripts\activate; pip install -r requirements.txt
@@ -72,18 +72,21 @@ $null = gcloud run jobs describe $Job --region=$Region --project=$Project 2>$nul
 if ($LASTEXITCODE -ne 0) { gcloud run jobs create $Job @JobArgs } else { gcloud run jobs update $Job @JobArgs }
 if ($LASTEXITCODE -ne 0) { Write-Error "job deploy failed"; exit 1 }
 
-# Hourly. Time of day does not matter, so the zone is only for reading logs.
+# Every 10 minutes, so a booking Muse confirms shows up in the app quickly; a
+# run with no new reply and no new place costs one Gmail search and no email.
+# The scheduler keeps its original "-hourly" name: renaming means recreating it.
+# Time of day does not matter, so the zone is only for reading logs.
 $Uri = "https://$Region-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$Project/jobs/${Job}:run"
 $Cron = "$Job-hourly"
 $null = gcloud scheduler jobs describe $Cron --location=$Region --project=$Project 2>$null
 if ($LASTEXITCODE -ne 0) {
-    gcloud scheduler jobs create http $Cron --schedule="0 * * * *" --time-zone="America/New_York" `
+    gcloud scheduler jobs create http $Cron --schedule="*/10 * * * *" --time-zone="America/New_York" `
         --uri=$Uri --http-method=POST --oauth-service-account-email=$SA --location=$Region --project=$Project
 } else {
-    gcloud scheduler jobs update http $Cron --schedule="0 * * * *" --time-zone="America/New_York" `
+    gcloud scheduler jobs update http $Cron --schedule="*/10 * * * *" --time-zone="America/New_York" `
         --uri=$Uri --oauth-service-account-email=$SA --location=$Region --project=$Project
 }
 
 Write-Host ""
-Write-Host "=== Deployed: $Job runs hourly ==="
+Write-Host "=== Deployed: $Job runs every 10 minutes ==="
 Write-Host "Run now:  gcloud run jobs execute $Job --region=$Region --project=$Project"
