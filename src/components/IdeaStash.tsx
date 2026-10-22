@@ -20,7 +20,8 @@ import { db } from '../services/firebase';
 import { geminiService } from '../services/geminiService';
 import { cn } from '../utils';
 import { Trip, Activity, Idea, IdeaPhoto, User } from '../types';
-import { t, useLang } from '../i18n';
+import { t, useLang, getLang } from '../i18n';
+import { useCollapsed } from './Section';
 
 const CATEGORY_META: Record<Idea['category'], { icon: string; label: string; chip: string }> = {
   restaurant: { icon: '🍽', label: '餐廳', chip: 'text-rose-600 bg-rose-50 border-rose-100' },
@@ -31,6 +32,17 @@ const CATEGORY_META: Record<Idea['category'], { icon: string; label: string; chi
   stay: { icon: '🏨', label: '住宿', chip: 'text-teal-700 bg-teal-50 border-teal-100' },
   other: { icon: '✨', label: '其他', chip: 'text-stone-600 bg-stone-100 border-stone-200' },
 };
+
+/**
+ * Whether an idea is shown under 訂位狀況 instead of in the stash: a food place
+ * that is booked or still being worked on. Walk-ins and no-table places stay
+ * in the stash, marked, so each place appears in exactly one list.
+ */
+export function isInReservations(i: Idea): boolean {
+  const s = i.reservation?.status;
+  return (i.category === 'restaurant' || i.category === 'cafe' || i.category === 'bar')
+    && (s === 'booked' || s === 'requested' || s === 'available' || s === 'needs_card');
+}
 
 /** Gemini is told to return one of these, but it is a string on the wire. */
 function normalizeCategory(raw: unknown): Idea['category'] {
@@ -101,6 +113,7 @@ export function IdeaStash({
   onJumpToDay: (date: string) => void;
 }) {
   useLang();
+  const [expanded, toggleExpanded] = useCollapsed('idea-stash', false);
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [pasteSource, setPasteSource] = useState('');
@@ -147,7 +160,7 @@ export function IdeaStash({
 
   const photosFor = (ideaId: string) => photos.filter(p => p.idea_id === ideaId);
 
-  const open = ideas.filter(i => i.status !== 'scheduled');
+  const open = ideas.filter(i => i.status !== 'scheduled' && !isInReservations(i));
   const counts = (Object.keys(CATEGORY_META) as Idea['category'][])
     .map(k => ({ k, n: open.filter(i => (CATEGORY_META[i.category] ? i.category : 'other') === k).length }))
     .filter(c => c.n > 0);
@@ -396,12 +409,15 @@ export function IdeaStash({
             <div className="w-8 h-8 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center flex-shrink-0">
               <Lightbulb size={16} />
             </div>
-            <div>
-              <h3 className="text-sm font-bold text-zinc-900 leading-tight">{t('靈感暫存區')}</h3>
+            <button onClick={toggleExpanded} className="text-left">
+              <h3 className="text-sm font-bold text-zinc-900 leading-tight flex items-center gap-1">
+                {t('靈感暫存區')}
+                <ChevronDown size={14} className={cn('text-zinc-400 transition-transform', !expanded && '-rotate-90')} />
+              </h3>
               <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
                 {t('想去但還沒決定哪天的地方 · {n} 個待安排', { n: open.length })}
               </p>
-            </div>
+            </button>
           </div>
           {open.length > 0 && (
             <button
@@ -415,6 +431,7 @@ export function IdeaStash({
           )}
         </div>
 
+        {expanded && (<>
         <div className="flex gap-2 mt-3">
           <button
             onClick={() => { setPasteOpen(o => !o); setManualOpen(false); }}
@@ -461,8 +478,10 @@ export function IdeaStash({
             )}
           </div>
         )}
+        </>)}
       </div>
 
+      {expanded && (<>
       {/* ── Paste + extract ── */}
       <AnimatePresence initial={false}>
         {pasteOpen && (
@@ -671,8 +690,23 @@ export function IdeaStash({
                       <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full border', meta.chip)}>
                         {meta.icon} {t(meta.label)}
                       </span>
+                      {idea.reservation?.status === 'walk_in' && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-violet-50 text-violet-600 border-violet-100">
+                          🚶 {t('現場排隊')}
+                        </span>
+                      )}
+                      {idea.reservation?.status === 'unavailable' && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-red-50 text-red-500 border-red-100">
+                          🚫 {t('旅程期間訂不到')}
+                        </span>
+                      )}
                     </div>
                     {idea.note && <p className="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">{idea.note}</p>}
+                    {idea.reservation?.note && (idea.reservation.status === 'walk_in' || idea.reservation.status === 'unavailable') && (
+                      <p className="text-[10px] text-zinc-400 mt-1 leading-relaxed">
+                        {(getLang() === 'en' && idea.reservation.note_en) || idea.reservation.note}
+                      </p>
+                    )}
                     <div className="flex items-center gap-2.5 mt-1.5 text-[9px] text-zinc-400 flex-wrap">
                       {idea.area && <span className="flex items-center gap-0.5"><MapPin size={8} />{idea.area}</span>}
                       {idea.duration && <span>⏱ {idea.duration}</span>}
@@ -900,6 +934,7 @@ export function IdeaStash({
           </div>
         )}
       </div>
+      </>)}
 
       <AnimatePresence>
         {viewer && (

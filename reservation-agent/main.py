@@ -267,6 +267,10 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
         results = parse_reply(text, state.get("refs") or {}, food)
         print(f"  reply {mid}: {len(results)} results")
         for r in results:
+            # Marked by hand in the app (booked it themselves, or gave up):
+            # that decision outranks anything in a later reply.
+            if (food[r["idea_id"]].get("reservation") or {}).get("manual"):
+                continue
             res = {
                 **(food[r["idea_id"]].get("reservation") or {}),
                 "status": r["status"], "slots": r["slots"], "confirmation": r["confirmation"],
@@ -279,10 +283,11 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
         state["last_reply_at"] = now_iso()
 
     # 2. New request when something has never been sent.
-    never_sent = [i for i, d in food.items() if not (d.get("reservation") or {}).get("requested_at")]
+    manual = {i for i, d in food.items() if (d.get("reservation") or {}).get("manual")}
+    never_sent = [i for i, d in food.items() if i not in manual and not (d.get("reservation") or {}).get("requested_at")]
     if never_sent:
         open_ideas = sorted(
-            ((i, d) for i, d in food.items() if (d.get("reservation") or {}).get("status") != "booked"),
+            ((i, d) for i, d in food.items() if i not in manual and (d.get("reservation") or {}).get("status") != "booked"),
             key=lambda x: x[1].get("created_at", ""),
         )
         acts = [a.to_dict() for a in db.collection("activities").where("trip_id", "==", child_id).stream()]

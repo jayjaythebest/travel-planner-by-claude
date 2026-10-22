@@ -49,9 +49,12 @@ export interface Trip {
 
 export interface SuggestedDay {
   date: string;
+  /** English; the *_zh fields are the same text in Chinese, picked by UI language. */
   title: string;
+  title_zh?: string;
   /** One or two sentences on why the day is shaped this way. */
   summary?: string;
+  summary_zh?: string;
   stops: SuggestedStop[];
 }
 
@@ -62,6 +65,7 @@ export interface SuggestedStop {
   activity: string;
   area?: string;
   note?: string;
+  note_zh?: string;
   /** Title of the stash idea this stop places, so importing marks it scheduled. */
   idea_title?: string;
   imported?: boolean;
@@ -192,6 +196,8 @@ export interface Reservation {
   /** Chinese; `note_en` is the same sentence in English, picked by UI language. */
   note?: string;
   note_en?: string;
+  /** Set by the ✓/✕ buttons in the app; the reservation-agent leaves such places alone. */
+  manual?: boolean;
   requested_at?: string;
   updated_at?: string;
 }

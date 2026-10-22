@@ -11,12 +11,16 @@ import {
   Sparkles,
   Plus,
   Loader2,
+  ChevronDown,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation } from '../types';
-import { IdeaStash } from './IdeaStash';
+import { IdeaStash, isInReservations } from './IdeaStash';
+import { Section, useCollapsed } from './Section';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../services/firebase';
 import { t, useLang, getLang } from '../i18n';
 
 const weekday = (d: Date) => (getLang() === 'en' ? format(d, 'EEE') : '週' + '日一二三四五六'[d.getDay()]);
@@ -89,7 +93,7 @@ function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (sto
           <span className="text-[9px] font-bold uppercase tracking-widest text-violet-600 bg-violet-100 px-1.5 py-0.5 rounded-full flex-shrink-0">
             {t('建議')}
           </span>
-          <span className="text-[11px] font-bold text-violet-900/80 truncate">{day.title}</span>
+          <span className="text-[11px] font-bold text-violet-900/80 truncate">{(getLang() === 'zh' && day.title_zh) || day.title}</span>
         </div>
         <button
           onClick={() => run('all', pending.map(s => s.id))}
@@ -101,7 +105,7 @@ function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (sto
         </button>
       </div>
       {day.summary && (
-        <p className="text-[10px] text-violet-900/60 leading-relaxed mb-2 italic">{day.summary}</p>
+        <p className="text-[10px] text-violet-900/60 leading-relaxed mb-2 italic">{(getLang() === 'zh' && day.summary_zh) || day.summary}</p>
       )}
       <ul className="space-y-1">
         {pending.map(s => (
@@ -111,7 +115,7 @@ function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (sto
               <div className="text-[11px] font-bold text-zinc-700 leading-snug">{s.activity}</div>
               {(s.area || s.note) && (
                 <div className="text-[10px] text-zinc-400 leading-snug">
-                  {[s.area, s.note].filter(Boolean).join(' · ')}
+                  {[s.area, (getLang() === 'zh' && s.note_zh) || s.note].filter(Boolean).join(' · ')}
                 </div>
               )}
             </div>
@@ -150,79 +154,123 @@ const fmtSlot = (s: string) => {
 };
 
 /**
- * Booking status of every restaurant, café and bar in the stash, as reported
- * back by Muse through the reservation-agent job. Read-only here: the job owns
- * `idea.reservation`, and a place nobody has asked about yet shows as waiting
- * for the next hourly run.
+ * Restaurants, cafés and bars that are booked or being worked on — asked of
+ * Muse, or reported back with times that still need a decision. Walk-ins and
+ * places with no table stay in the idea stash instead (marked there), so a
+ * place is only ever in one of the two lists; see isInReservations.
+ *
+ * The two buttons are manual overrides for when someone booked a needs-card
+ * place themselves, or gave up on it. `manual` tells the reservation-agent to
+ * leave the place alone from then on.
  */
 function Reservations({ ideas, trip, onToggle }: { ideas: Idea[]; trip: Trip; onToggle: (on: boolean) => Promise<void> }) {
   const [saving, setSaving] = useState(false);
+  const [open, toggleOpen] = useCollapsed('reservations', true);
   const food = ideas.filter(i => FOOD_ICON[i.category]);
   if (food.length === 0) return null;
-  const rank = (i: Idea) => (i.reservation ? RES_ORDER.indexOf(i.reservation.status) : RES_ORDER.length);
-  const rows = [...food].sort((a, b) => rank(a) - rank(b));
-  const booked = food.filter(i => i.reservation?.status === 'booked').length;
+  const rows = ideas
+    .filter(isInReservations)
+    .sort((a, b) => RES_ORDER.indexOf(a.reservation!.status) - RES_ORDER.indexOf(b.reservation!.status));
+  const booked = rows.filter(i => i.reservation?.status === 'booked').length;
   const thread = trip.reservation_thread;
   const when = (iso?: string) => (iso ? format(parseISO(iso), 'M/d HH:mm') : '—');
 
+  const mark = async (idea: Idea, status: 'booked' | 'unavailable') => {
+    try {
+      await updateDoc(doc(db, 'ideas', idea.id), {
+        'reservation.status': status,
+        'reservation.manual': true,
+        'reservation.updated_at': new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('訂位狀況')}</h3>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold text-zinc-400">{t('已訂 {n}／{total}', { n: booked, total: food.length })}</span>
-          <button
-            onClick={async () => { setSaving(true); try { await onToggle(!trip.reservations_enabled); } finally { setSaving(false); } }}
-            disabled={saving}
-            className={cn(
-              'text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-50',
-              trip.reservations_enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-900 text-white border-zinc-900',
-            )}
-          >
-            {trip.reservations_enabled ? t('Muse 訂位：開') : t('開始請 Muse 訂位')}
-          </button>
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <button
+          onClick={toggleOpen}
+          className="flex items-center gap-1.5 min-w-0 text-sm font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors"
+        >
+          <ChevronDown size={14} className={cn('flex-shrink-0 transition-transform', !open && '-rotate-90')} />
+          <span className="truncate">{t('訂位狀況')}</span>
+          <span className="normal-case tracking-normal text-[11px] font-medium text-zinc-300 truncate">
+            · {t('已訂 {n}／{total}', { n: booked, total: rows.length })}
+          </span>
+        </button>
+        <button
+          onClick={async () => { setSaving(true); try { await onToggle(!trip.reservations_enabled); } finally { setSaving(false); } }}
+          disabled={saving}
+          className={cn(
+            'text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-50 flex-shrink-0',
+            trip.reservations_enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-900 text-white border-zinc-900',
+          )}
+        >
+          {trip.reservations_enabled ? t('Muse 訂位：開') : t('開始請 Muse 訂位')}
+        </button>
       </div>
-      <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
-        {rows.map(i => {
-          const r = i.reservation;
-          const meta = r ? RES_META[r.status] : null;
-          return (
-            <div key={i.id} className="p-3">
-              <div className="flex items-center gap-2">
-                <span className="text-sm flex-shrink-0">{FOOD_ICON[i.category]}</span>
-                <span className="text-xs font-bold text-zinc-800 flex-1 min-w-0 truncate">{i.title}</span>
-                <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full border flex-shrink-0', meta?.chip ?? 'bg-white text-zinc-300 border-zinc-200 border-dashed')}>
-                  {meta ? t(meta.label) : t('等待寄出')}
-                </span>
-              </div>
-              {r && (r.slots?.length || r.confirmation || r.note) ? (
-                <div className="pl-6 mt-1.5 space-y-1">
-                  {r.slots && r.slots.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {r.slots.map(s => (
-                        <span key={s} className="text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-md bg-zinc-50 border border-zinc-100 text-zinc-600">
-                          {fmtSlot(s)}
-                        </span>
-                      ))}
+      {open && (
+        <>
+          {rows.length === 0 ? (
+            <p className="text-xs text-zinc-400 bg-white rounded-2xl border border-dashed border-zinc-200 p-4 text-center">
+              {t('目前沒有已訂或接洽中的訂位')}
+            </p>
+          ) : (
+            <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
+              {rows.map(i => {
+                const r = i.reservation!;
+                const meta = RES_META[r.status];
+                return (
+                  <div key={i.id} className="p-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm flex-shrink-0">{FOOD_ICON[i.category]}</span>
+                      <span className="text-xs font-bold text-zinc-800 flex-1 min-w-0 truncate">{i.title}</span>
+                      <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full border flex-shrink-0', meta.chip)}>
+                        {t(meta.label)}
+                      </span>
                     </div>
-                  )}
-                  {r.confirmation && (
-                    <div className="text-[10px] text-emerald-700">{t('確認碼：{code}', { code: r.confirmation })}</div>
-                  )}
-                  {r.note && <div className="text-[10px] text-zinc-400 leading-snug">{(getLang() === 'en' && r.note_en) || r.note}</div>}
-                </div>
-              ) : null}
+                    {(r.slots?.length || r.confirmation || r.note) ? (
+                      <div className="pl-6 mt-1.5 space-y-1">
+                        {r.slots && r.slots.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {r.slots.map(s => (
+                              <span key={s} className="text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-md bg-zinc-50 border border-zinc-100 text-zinc-600">
+                                {fmtSlot(s)}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {r.confirmation && (
+                          <div className="text-[10px] text-emerald-700">{t('確認碼：{code}', { code: r.confirmation })}</div>
+                        )}
+                        {r.note && <div className="text-[10px] text-zinc-400 leading-snug">{(getLang() === 'en' && r.note_en) || r.note}</div>}
+                      </div>
+                    ) : null}
+                    {r.status !== 'booked' && (
+                      <div className="pl-6 mt-2 flex gap-3">
+                        <button onClick={() => mark(i, 'booked')} className="text-[10px] font-bold text-emerald-600 hover:underline">
+                          {t('✓ 標記已訂')}
+                        </button>
+                        <button onClick={() => mark(i, 'unavailable')} className="text-[10px] font-bold text-zinc-400 hover:text-red-500 hover:underline">
+                          {t('✕ 訂不到')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
-      <p className="text-[10px] text-zinc-400">
-        {!trip.reservations_enabled ? t('還沒開啟。開啟後每小時檢查一次，有新的店就寄信給 Muse。') : t('每小時自動寄信給 Muse 並讀回覆 · 上次寄出 {sent} · 上次回覆 {reply}', {
-          sent: when(thread?.last_request_at),
-          reply: when(thread?.last_reply_at),
-        })}
-      </p>
+          )}
+          <p className="text-[10px] text-zinc-400">
+            {!trip.reservations_enabled ? t('還沒開啟。開啟後每小時檢查一次，有新的店就寄信給 Muse。') : t('每小時自動寄信給 Muse 並讀回覆 · 上次寄出 {sent} · 上次回覆 {reply}', {
+              sent: when(thread?.last_request_at),
+              reply: when(thread?.last_reply_at),
+            })}
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -486,8 +534,7 @@ export function TripOverview({
       />
 
       {/* ── Day by day ── */}
-      <div className="space-y-2">
-        <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('每日一覽')}</h3>
+      <Section id="days" title={t('每日一覽')} summary={t('{n} 天', { n: dates.length })}>
         <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden divide-y divide-zinc-100">
           {dates.map((date, i) => {
             const dayActivities = activities
@@ -568,12 +615,11 @@ export function TripOverview({
             );
           })}
         </div>
-      </div>
+      </Section>
 
       {/* ── Flights ── */}
       {flights.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('航班')}</h3>
+        <Section id="flights" title={t('航班')} summary={t('{n} 班', { n: flights.length })} defaultOpen={false}>
           <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
             {flights
               .slice()
@@ -595,13 +641,12 @@ export function TripOverview({
                 </button>
               ))}
           </div>
-        </div>
+        </Section>
       )}
 
       {/* ── Who is on which flight ── */}
       {members.length > 1 && flights.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('誰搭哪一班')}</h3>
+        <Section id="who-flies" title={t('誰搭哪一班')} summary={noFlight.length > 0 ? t('{n} 人還沒登記', { n: noFlight.length }) : t('{n} 人', { n: members.length })}>
           <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
             {members.map(u => {
               const mine = flightsOf(u.id);
@@ -638,13 +683,12 @@ export function TripOverview({
               );
             })}
           </div>
-        </div>
+        </Section>
       )}
 
       {/* ── Accommodations ── */}
       {accommodations.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('住宿')}</h3>
+        <Section id="lodging" title={t('住宿')} summary={t('{n} 間', { n: accommodations.length })} defaultOpen={false}>
           <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
             {accommodations
               .slice()
@@ -674,18 +718,22 @@ export function TripOverview({
                 );
               })}
           </div>
-        </div>
+        </Section>
       )}
 
       {/* ── Expenses by category ── */}
       {topCategories.length > 0 && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('支出分布')}</h3>
-            <button onClick={onOpenExpenses} className="text-[11px] font-bold text-zinc-400 hover:text-zinc-900">
+        <Section
+          id="spending"
+          title={t('支出分布')}
+          summary={`$${Math.round(totalSpent).toLocaleString()} ${totalCurrency}`}
+          defaultOpen={false}
+          right={
+            <button onClick={onOpenExpenses} className="text-[11px] font-bold text-zinc-400 hover:text-zinc-900 flex-shrink-0">
               {t('詳細分析 →')}
             </button>
-          </div>
+          }
+        >
           <div className="bg-white rounded-2xl border border-zinc-200 p-3.5 space-y-2.5">
             {topCategories.map(([cat, amount]) => (
               <div key={cat}>
@@ -709,7 +757,7 @@ export function TripOverview({
               </div>
             ))}
           </div>
-        </div>
+        </Section>
       )}
 
       {/* ── Checklist progress ── */}
