@@ -210,7 +210,7 @@ function Reservations({ ideas, trip, onToggle }: { ideas: Idea[]; trip: Trip; on
                   {r.confirmation && (
                     <div className="text-[10px] text-emerald-700">{t('確認碼：{code}', { code: r.confirmation })}</div>
                   )}
-                  {r.note && <div className="text-[10px] text-zinc-400 leading-snug">{r.note}</div>}
+                  {r.note && <div className="text-[10px] text-zinc-400 leading-snug">{(getLang() === 'en' && r.note_en) || r.note}</div>}
                 </div>
               ) : null}
             </div>

@@ -190,7 +190,8 @@ def parse_reply(text: str, refs: dict, ideas: dict[str, dict]) -> list[dict]:
 - ref 填上面的編號數字；回覆只寫店名沒寫編號時，依名稱對到最接近的那一個。對不到就不要列。
 - status 只能是 booked / available / needs_card / unavailable / walk_in。
 - slots 是可訂或已訂的時段，每個寫成 "YYYY-MM-DD HH:MM"（年份用旅程的年份），沒有就空陣列。
-- confirmation 是確認碼，沒有就空字串。note 用一句話保留其他重要資訊（訂金、人數限制、要電話訂之類），沒有就空字串。
+- confirmation 是確認碼，沒有就空字串。
+- note 用一句話保留其他重要資訊（訂金、人數限制、要電話訂之類），沒有就空字串。同一句話要給兩個版本：note 用繁體中文，note_en 用英文；店名、金額、email、電話照原文。
 
 Muse 的回覆：
 \"\"\"
@@ -214,6 +215,7 @@ Muse 的回覆：
                                 "slots": {"type": "ARRAY", "items": {"type": "STRING"}},
                                 "confirmation": {"type": "STRING"},
                                 "note": {"type": "STRING"},
+                                "note_en": {"type": "STRING"},
                             },
                             "required": ["ref", "status"],
                         },
@@ -229,7 +231,8 @@ Muse 的回覆：
         status = str(r.get("status", "")).lower()
         if idea_id and status in STATUSES:
             out.append({"idea_id": idea_id, "status": status, "slots": r.get("slots") or [],
-                        "confirmation": r.get("confirmation") or "", "note": r.get("note") or ""})
+                        "confirmation": r.get("confirmation") or "", "note": r.get("note") or "",
+                        "note_en": r.get("note_en") or ""})
     return out
 
 
@@ -267,7 +270,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
             res = {
                 **(food[r["idea_id"]].get("reservation") or {}),
                 "status": r["status"], "slots": r["slots"], "confirmation": r["confirmation"],
-                "note": r["note"], "updated_at": now_iso(),
+                "note": r["note"], "note_en": r["note_en"], "updated_at": now_iso(),
             }
             print(f"    {food[r['idea_id']]['title']}: {r['status']} {r['slots']} {r['confirmation']}")
             if not dry:

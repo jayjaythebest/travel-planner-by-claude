@@ -189,7 +189,9 @@ export interface Reservation {
   /** "YYYY-MM-DD HH:MM" — the booked time, or the times that can be booked. */
   slots?: string[];
   confirmation?: string;
+  /** Chinese; `note_en` is the same sentence in English, picked by UI language. */
   note?: string;
+  note_en?: string;
   requested_at?: string;
   updated_at?: string;
 }
