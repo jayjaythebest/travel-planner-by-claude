@@ -27,7 +27,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, settleUp, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, settleUp, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -413,6 +413,8 @@ export default function App() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [splitPaidBy, setSplitPaidBy] = useState('');
   const [flightPassengers, setFlightPassengers] = useState<string[]>([]);
+  /** Legs read from a multi-flight confirmation, waiting for the user to tick which to add. */
+  const [flightCandidates, setFlightCandidates] = useState<(typeof flightForm & { picked: boolean })[] | null>(null);
   const [splitWith, setSplitWith] = useState<string[]>([]);
 
   const openEditExpense = (expense: Expense) => {
@@ -1119,20 +1121,49 @@ export default function App() {
     }
   };
 
-  const handleAddFlight = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!selectedTrip) return;
-    
-    const { flightNo, date, departureTime, arrivalTime, arrivalAirport, departureAirport } = flightForm;
+  const EMPTY_FLIGHT = { flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '', departureTimeZone: '', arrivalTimeZone: '' };
+
+  /** One parsed leg -> form shape. Unknown zones are dropped, see isValidTimeZone. */
+  const toFlightDraft = (res: any): typeof flightForm => ({
+    flightNo: res.flightNo || '',
+    departureAirport: res.departureAirport || '',
+    arrivalAirport: res.arrivalAirport || '',
+    departureTime: res.departureTime || '',
+    arrivalTime: res.arrivalTime || '',
+    date: res.date || getDateRange()[0],
+    departureTimeZone: isValidTimeZone(res.departureTimeZone) ? res.departureTimeZone : '',
+    arrivalTimeZone: isValidTimeZone(res.arrivalTimeZone) ? res.arrivalTimeZone : '',
+  });
+
+  /** One leg fills the form as before; several go to the pick-and-add list. */
+  const applyParsedFlights = (list: any[]) => {
+    const drafts = list.map(toFlightDraft).filter(d => d.flightNo);
+    if (drafts.length === 0) {
+      alert(t('沒有讀到航班資訊'));
+      return;
+    }
+    if (drafts.length === 1) {
+      setFlightForm(drafts[0]);
+      return;
+    }
+    const range = getDateRange();
+    setFlightCandidates(drafts.map(d => ({ ...d, picked: range.includes(d.date) })));
+  };
+
+  /**
+   * Write one leg, or join it when the same flight number on the same date is
+   * already on the trip. Returns which of the two happened.
+   */
+  const saveFlight = async (f: typeof flightForm, passengers: string[]): Promise<'added' | 'joined'> => {
+    if (!selectedTrip) throw new Error('no trip');
+    const { flightNo, date, departureTime, arrivalTime, arrivalAirport, departureAirport } = f;
 
     // Only stored when they differ from the trip's own zone: an all-Japan
     // domestic leg on a Japan trip needs no override, and writing one would be
     // a second copy of the same fact to keep in step.
     const tripZone = TIMEZONE_MAP[selectedTrip.country] ?? 'Asia/Taipei';
-    const departureZone = flightForm.departureTimeZone || tripZone;
-    const arrivalZone = flightForm.arrivalTimeZone || tripZone;
-
-    const passengers = flightPassengers.length > 0 ? flightPassengers : currentUser ? [currentUser.id] : [];
+    const departureZone = f.departureTimeZone || tripZone;
+    const arrivalZone = f.arrivalTimeZone || tripZone;
 
     // Someone else already entered this flight: join it rather than adding a
     // second card for the same plane.
@@ -1142,15 +1173,8 @@ export default function App() {
     if (existing) {
       const current = existing.passengers ?? tripMembers.map(u => u.id);
       const merged = [...new Set([...current, ...passengers])];
-      try {
-        await updateDoc(doc(db, 'activities', existing.id), { passengers: merged });
-        setCalendarMessage(t('{no} 已經有人登記，已把乘客加進這班', { no: flightNo.trim().toUpperCase() }));
-        setIsAddingFlight(false);
-        setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '', departureTimeZone: '', arrivalTimeZone: '' });
-      } catch (err) {
-        console.error(err);
-      }
-      return;
+      await updateDoc(doc(db, 'activities', existing.id), { passengers: merged });
+      return 'joined';
     }
 
     const newActivity = {
@@ -1169,12 +1193,54 @@ export default function App() {
       travel_mode: 'transit',
     };
 
+    await addDoc(collection(db, "activities"), newActivity);
+    return 'added';
+  };
+
+  const flightPassengersOrMe = () =>
+    flightPassengers.length > 0 ? flightPassengers : currentUser ? [currentUser.id] : [];
+
+  const closeFlightModal = () => {
+    setIsAddingFlight(false);
+    setFlightForm(EMPTY_FLIGHT);
+    setFlightCandidates(null);
+    setShowAiInput(false);
+    setAiInputText('');
+  };
+
+  const handleAddFlight = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
     try {
-            await addDoc(collection(db, "activities"), newActivity);
-      setIsAddingFlight(false);
-      setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '', departureTimeZone: '', arrivalTimeZone: '' });
+      const result = await saveFlight(flightForm, flightPassengersOrMe());
+      if (result === 'joined') {
+        setCalendarMessage(t('{no} 已經有人登記，已把乘客加進這班', { no: flightForm.flightNo.trim().toUpperCase() }));
+      }
+      closeFlightModal();
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleAddFlightBatch = async () => {
+    if (!flightCandidates) return;
+    const picked = flightCandidates.filter(c => c.picked);
+    if (picked.length === 0) return;
+    setLoading(true);
+    let added = 0, joined = 0;
+    try {
+      // Sequential: two legs of one booking never share a flight number, but
+      // a parallel write could race the join check if they ever did.
+      for (const c of picked) {
+        if ((await saveFlight(c, flightPassengersOrMe())) === 'added') added++;
+        else joined++;
+      }
+      setCalendarMessage(t('已加入 {added} 班航班，{joined} 班已有人登記（已加入乘客）', { added, joined }));
+      closeFlightModal();
+    } catch (err) {
+      console.error(err);
+      alert(t('加入失敗，請再試一次。'));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1330,20 +1396,7 @@ export default function App() {
     reader.onloadend = async () => {
       const base64 = (reader.result as string).split(',')[1];
       try {
-        const res = await geminiService.parseFlightInfo('', base64, file.type);
-        setFlightForm({
-          flightNo: res.flightNo || '',
-          departureAirport: res.departureAirport || '',
-          arrivalAirport: res.arrivalAirport || '',
-          departureTime: res.departureTime || '',
-          arrivalTime: res.arrivalTime || '',
-          date: res.date || getDateRange()[0],
-          // A model asked for an IANA name can answer 'JST' or invent one, and
-          // an unknown zone makes the Calendar API reject the whole event. Drop
-          // anything this browser does not recognise and fall back to the trip.
-          departureTimeZone: isValidTimeZone(res.departureTimeZone) ? res.departureTimeZone : '',
-          arrivalTimeZone: isValidTimeZone(res.arrivalTimeZone) ? res.arrivalTimeZone : ''
-        });
+        applyParsedFlights(await geminiService.parseFlights('', base64, file.type));
       } catch (err) {
         console.error(err);
       } finally {
@@ -3034,12 +3087,7 @@ export default function App() {
         )}
 
         {isAddingFlight && (
-          <Modal title={t('新增航班')} onClose={() => {
-            setIsAddingFlight(false);
-            setFlightForm({ flightNo: '', departureAirport: '', arrivalAirport: '', departureTime: '', arrivalTime: '', date: '', departureTimeZone: '', arrivalTimeZone: '' });
-            setShowAiInput(false);
-            setAiInputText('');
-          }}>
+          <Modal title={t('新增航班')} onClose={closeFlightModal}>
             <div className="mb-6">
               <div className="flex gap-2 mb-4">
                 <button 
@@ -3068,17 +3116,7 @@ export default function App() {
                       if (!aiInputText) return;
                       setLoading(true);
                       try {
-                        const res = await geminiService.parseFlightInfo(aiInputText);
-                        setFlightForm({
-                          flightNo: res.flightNo || '',
-                          departureAirport: res.departureAirport || '',
-                          arrivalAirport: res.arrivalAirport || '',
-                          departureTimeZone: isValidTimeZone(res.departureTimeZone) ? res.departureTimeZone : '',
-                          arrivalTimeZone: isValidTimeZone(res.arrivalTimeZone) ? res.arrivalTimeZone : '',
-                          departureTime: res.departureTime || '',
-                          arrivalTime: res.arrivalTime || '',
-                          date: res.date || getDateRange()[0]
-                        });
+                        applyParsedFlights(await geminiService.parseFlights(aiInputText));
                         setShowAiInput(false);
                         setAiInputText('');
                       } catch (err) {
@@ -3094,6 +3132,62 @@ export default function App() {
                 </motion.div>
               )}
             </div>
+            {flightCandidates ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-zinc-700">{t('讀到 {n} 班航班', { n: flightCandidates.length })}</span>
+                  <button onClick={() => setFlightCandidates(null)} className="text-xs font-bold text-zinc-400 hover:text-zinc-800">
+                    {t('改成手動填寫')}
+                  </button>
+                </div>
+                <div className="space-y-2">
+                  {flightCandidates.map((c, i) => {
+                    const inTrip = getDateRange().includes(c.date);
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setFlightCandidates(cs => cs ? cs.map((x, xi) => (xi === i ? { ...x, picked: !x.picked } : x)) : cs)}
+                        className={cn(
+                          "w-full text-left p-3 rounded-xl border flex items-start gap-3 transition-colors",
+                          c.picked ? "bg-white border-zinc-900" : "bg-zinc-50 border-zinc-200 opacity-60",
+                        )}
+                      >
+                        <div className={cn("w-4 h-4 mt-0.5 rounded border flex-shrink-0 flex items-center justify-center text-[10px]", c.picked ? "bg-zinc-900 border-zinc-900 text-white" : "border-zinc-300")}>
+                          {c.picked && '✓'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-black text-zinc-900">{c.flightNo}</span>
+                            <span className="text-xs font-bold text-zinc-500">{c.departureAirport} → {c.arrivalAirport}</span>
+                          </div>
+                          <div className="text-xs text-zinc-500 tabular-nums mt-0.5">
+                            {c.date} · {c.departureTime} → {c.arrivalTime}
+                          </div>
+                          <div className="text-[10px] text-zinc-400 mt-0.5">
+                            {(c.departureTimeZone || t('旅程時區')).replace(/_/g, ' ')} → {(c.arrivalTimeZone || t('旅程時區')).replace(/_/g, ' ')}
+                          </div>
+                          {!inTrip && <div className="text-[10px] font-bold text-amber-600 mt-0.5">{t('不在旅程日期內，預設不加入')}</div>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                {tripMembers.length > 1 && (
+                  <div>
+                    <label className="block text-sm font-bold text-zinc-600 mb-1.5">{t('誰搭這些航班')}</label>
+                    <MemberChips members={tripMembers} value={flightPassengers} onChange={setFlightPassengers} />
+                  </div>
+                )}
+                <button
+                  onClick={handleAddFlightBatch}
+                  disabled={flightCandidates.every(c => !c.picked)}
+                  className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg disabled:opacity-40"
+                >
+                  {t('加入 {n} 班航班', { n: flightCandidates.filter(c => c.picked).length })}
+                </button>
+              </div>
+            ) : (
             <form onSubmit={handleAddFlight} className="space-y-4">
               <div>
                 <label className="block text-sm font-bold text-zinc-600 mb-1">{t('航班號')}</label>
@@ -3149,7 +3243,7 @@ export default function App() {
                     onChange={(e) => setFlightForm({...flightForm, departureTimeZone: e.target.value})}
                     className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   >
-                    {TIME_ZONE_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{t(tz.label)}</option>)}
+                    {timeZoneOptionsWith(flightForm.departureTimeZone || (selectedTrip ? (TIMEZONE_MAP[selectedTrip.country] ?? 'Asia/Taipei') : 'Asia/Taipei')).map(tz => <option key={tz.value} value={tz.value}>{t(tz.label)}</option>)}
                   </select>
                 </div>
                 <div>
@@ -3159,7 +3253,7 @@ export default function App() {
                     onChange={(e) => setFlightForm({...flightForm, arrivalTimeZone: e.target.value})}
                     className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl"
                   >
-                    {TIME_ZONE_OPTIONS.map(tz => <option key={tz.value} value={tz.value}>{t(tz.label)}</option>)}
+                    {timeZoneOptionsWith(flightForm.arrivalTimeZone || (selectedTrip ? (TIMEZONE_MAP[selectedTrip.country] ?? 'Asia/Taipei') : 'Asia/Taipei')).map(tz => <option key={tz.value} value={tz.value}>{t(tz.label)}</option>)}
                   </select>
                 </div>
               </div>
@@ -3197,6 +3291,7 @@ export default function App() {
               )}
               <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{t('確認航班')}</button>
             </form>
+            )}
           </Modal>
         )}
 

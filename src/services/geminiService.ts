@@ -32,8 +32,13 @@ headline 與每條 tips 都用 ${outLang()}，tips 每條 25 字以內（英文�
     return response.text?.trim() || '';
   },
 
-  async parseFlightInfo(text: string, imageBase64?: string, mimeType?: string) {
-    const parts: any[] = [{ text: `你是一個專業的旅遊助手。請從以下資訊中提取航班資訊：\n"${text}"\n所有時間一律轉成 24 小時制 HH:MM（00:00–23:59）。下午／傍晚／晚上的時間請加 12 小時，例如下午 2:30 PM = 14:30、晚上 11:50 PM = 23:50、中午 12:00 PM = 12:00、凌晨 12:30 AM = 00:30。` }];
+  /**
+   * Every flight leg in a booking confirmation, itinerary or boarding pass.
+   * Always an array: a round trip with a connection each way is four legs, and
+   * asking for "the flight" used to return only the first of them.
+   */
+  async parseFlights(text: string, imageBase64?: string, mimeType?: string): Promise<any[]> {
+    const parts: any[] = [{ text: `你是一個專業的旅遊助手。請從以下資訊中提取所有航班。訂位確認信常常有多段（轉機、去程與回程），每一段都要各自列成一筆，依起飛時間排序；同一段不要重複列。\n"${text}"\n所有時間一律轉成 24 小時制 HH:MM（00:00–23:59）。下午／傍晚／晚上的時間請加 12 小時，例如下午 2:30 PM = 14:30、晚上 11:50 PM = 23:50、中午 12:00 PM = 12:00、凌晨 12:30 AM = 00:30。` }];
     if (imageBase64 && mimeType) {
       parts.push({ inlineData: { data: imageBase64, mimeType } });
     }
@@ -46,6 +51,11 @@ headline 與每條 tips 都用 ${outLang()}，tips 每條 25 字以內（英文�
         responseSchema: {
           type: Type.OBJECT,
           properties: {
+           flights: {
+            type: Type.ARRAY,
+            items: {
+          type: Type.OBJECT,
+          properties: {
             flightNo: { type: Type.STRING },
             departureAirport: { type: Type.STRING },
             departureTime: { type: Type.STRING, description: "24-hour format HH:MM (00:00-23:59), e.g. 2:30 PM = 14:30. Local time AT THE DEPARTURE AIRPORT, exactly as printed on the ticket - do not convert it." },
@@ -56,10 +66,15 @@ headline 與每條 tips 都用 ${outLang()}，tips 每條 25 字以內（英文�
             date: { type: Type.STRING, description: "YYYY-MM-DD" },
           },
           required: ["flightNo", "departureAirport", "departureTime", "arrivalAirport", "arrivalTime", "date"],
+            },
+           },
+          },
+          required: ["flights"],
         },
       },
     });
-    return JSON.parse(response.text || "{}");
+    const parsed = JSON.parse(response.text || '{"flights":[]}');
+    return Array.isArray(parsed.flights) ? parsed.flights : [];
   },
 
   async parseAccommodationInfo(text: string, imageBase64?: string, mimeType?: string) {

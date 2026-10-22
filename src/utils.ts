@@ -240,11 +240,29 @@ export const TIME_ZONE_OPTIONS: { label: string; value: string }[] = [
   { label: "杜拜 (UTC+4)", value: "Asia/Dubai" },
   { label: "倫敦 (UTC+0/+1)", value: "Europe/London" },
   { label: "巴黎 (UTC+1/+2)", value: "Europe/Paris" },
-  { label: "紐約 (UTC-5/-4)", value: "America/New_York" },
+  { label: "馬德里 (UTC+1/+2)", value: "Europe/Madrid" },
+  { label: "新加坡 (UTC+8)", value: "Asia/Singapore" },
+  { label: "紐約／波士頓 (UTC-5/-4)", value: "America/New_York" },
+  { label: "芝加哥／休士頓 (UTC-6/-5)", value: "America/Chicago" },
+  { label: "丹佛 (UTC-7/-6)", value: "America/Denver" },
+  { label: "墨西哥城 (UTC-6)", value: "America/Mexico_City" },
   { label: "洛杉磯 (UTC-8/-7)", value: "America/Los_Angeles" },
   { label: "雪梨 (UTC+10/+11)", value: "Australia/Sydney" },
   { label: "三蘭港 (UTC+3)", value: "Africa/Dar_es_Salaam" },
 ];
+
+/**
+ * TIME_ZONE_OPTIONS, plus `value` when it is not one of them.
+ *
+ * A <select> whose value matches no option silently shows its first option —
+ * which was 台北 — so a flight scanned as America/Chicago looked like Taipei
+ * time while saving something else. Every valid zone gets a row instead.
+ */
+export function timeZoneOptionsWith(value: string): { label: string; value: string }[] {
+  return !value || TIME_ZONE_OPTIONS.some(o => o.value === value)
+    ? TIME_ZONE_OPTIONS
+    : [...TIME_ZONE_OPTIONS, { label: value.replace(/_/g, ' '), value }];
+}
 
 /**
  * Whether a string is a time zone this browser actually knows.
