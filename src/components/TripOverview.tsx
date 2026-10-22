@@ -15,7 +15,7 @@ import {
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate } from '../utils';
-import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay } from '../types';
+import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation } from '../types';
 import { IdeaStash } from './IdeaStash';
 import { t, useLang, getLang } from '../i18n';
 
@@ -133,6 +133,100 @@ function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (sto
   );
 }
 
+const RES_META: Record<Reservation['status'], { label: string; chip: string }> = {
+  requested: { label: '已請 Muse 查詢', chip: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
+  booked: { label: '已訂位', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  available: { label: '可訂', chip: 'bg-blue-50 text-blue-600 border-blue-100' },
+  needs_card: { label: '需綁卡', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
+  unavailable: { label: '訂不到', chip: 'bg-red-50 text-red-500 border-red-100' },
+  walk_in: { label: '現場排隊', chip: 'bg-violet-50 text-violet-600 border-violet-100' },
+};
+const RES_ORDER: Reservation['status'][] = ['booked', 'available', 'needs_card', 'walk_in', 'unavailable', 'requested'];
+const FOOD_ICON: Record<string, string> = { restaurant: '🍽', cafe: '☕', bar: '🍸' };
+
+const fmtSlot = (s: string) => {
+  const d = parseISO(s.replace(' ', 'T'));
+  return isNaN(d.getTime()) ? s : format(d, 'M/d HH:mm');
+};
+
+/**
+ * Booking status of every restaurant, café and bar in the stash, as reported
+ * back by Muse through the reservation-agent job. Read-only here: the job owns
+ * `idea.reservation`, and a place nobody has asked about yet shows as waiting
+ * for the next hourly run.
+ */
+function Reservations({ ideas, trip, onToggle }: { ideas: Idea[]; trip: Trip; onToggle: (on: boolean) => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const food = ideas.filter(i => FOOD_ICON[i.category]);
+  if (food.length === 0) return null;
+  const rank = (i: Idea) => (i.reservation ? RES_ORDER.indexOf(i.reservation.status) : RES_ORDER.length);
+  const rows = [...food].sort((a, b) => rank(a) - rank(b));
+  const booked = food.filter(i => i.reservation?.status === 'booked').length;
+  const thread = trip.reservation_thread;
+  const when = (iso?: string) => (iso ? format(parseISO(iso), 'M/d HH:mm') : '—');
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('訂位狀況')}</h3>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-zinc-400">{t('已訂 {n}／{total}', { n: booked, total: food.length })}</span>
+          <button
+            onClick={async () => { setSaving(true); try { await onToggle(!trip.reservations_enabled); } finally { setSaving(false); } }}
+            disabled={saving}
+            className={cn(
+              'text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-50',
+              trip.reservations_enabled ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-zinc-900 text-white border-zinc-900',
+            )}
+          >
+            {trip.reservations_enabled ? t('Muse 訂位：開') : t('開始請 Muse 訂位')}
+          </button>
+        </div>
+      </div>
+      <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
+        {rows.map(i => {
+          const r = i.reservation;
+          const meta = r ? RES_META[r.status] : null;
+          return (
+            <div key={i.id} className="p-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm flex-shrink-0">{FOOD_ICON[i.category]}</span>
+                <span className="text-xs font-bold text-zinc-800 flex-1 min-w-0 truncate">{i.title}</span>
+                <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full border flex-shrink-0', meta?.chip ?? 'bg-white text-zinc-300 border-zinc-200 border-dashed')}>
+                  {meta ? t(meta.label) : t('等待寄出')}
+                </span>
+              </div>
+              {r && (r.slots?.length || r.confirmation || r.note) ? (
+                <div className="pl-6 mt-1.5 space-y-1">
+                  {r.slots && r.slots.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {r.slots.map(s => (
+                        <span key={s} className="text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-md bg-zinc-50 border border-zinc-100 text-zinc-600">
+                          {fmtSlot(s)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {r.confirmation && (
+                    <div className="text-[10px] text-emerald-700">{t('確認碼：{code}', { code: r.confirmation })}</div>
+                  )}
+                  {r.note && <div className="text-[10px] text-zinc-400 leading-snug">{r.note}</div>}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-[10px] text-zinc-400">
+        {!trip.reservations_enabled ? t('還沒開啟。開啟後每小時檢查一次，有新的店就寄信給 Muse。') : t('每小時自動寄信給 Muse 並讀回覆 · 上次寄出 {sent} · 上次回覆 {reply}', {
+          sent: when(thread?.last_request_at),
+          reply: when(thread?.last_reply_at),
+        })}
+      </p>
+    </div>
+  );
+}
+
 export function TripOverview({
   trip,
   dates,
@@ -148,6 +242,7 @@ export function TripOverview({
   onAddAccommodation,
   onAddFlight,
   onImportSuggestion,
+  onToggleReservations,
 }: {
   trip: Trip;
   dates: string[];
@@ -163,6 +258,7 @@ export function TripOverview({
   onAddAccommodation: () => void;
   onAddFlight: () => void;
   onImportSuggestion: (date: string, stopIds: string[]) => Promise<void>;
+  onToggleReservations: (on: boolean) => Promise<void>;
 }) {
   useLang();
   const today = new Date();
@@ -375,6 +471,9 @@ export function TripOverview({
           ))}
         </div>
       )}
+
+      {/* ── Reservations ── */}
+      <Reservations ideas={ideas} trip={trip} onToggle={onToggleReservations} />
 
       {/* ── Idea stash ── */}
       <IdeaStash

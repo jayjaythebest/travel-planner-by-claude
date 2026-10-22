@@ -425,7 +425,7 @@ ${text.slice(0, 20000)}
                 type: Type.OBJECT,
                 properties: {
                   title: { type: Type.STRING, description: "地點名稱，保留原文" },
-                  category: { type: Type.STRING, description: "restaurant | cafe | landmark | shopping | other" },
+                  category: { type: Type.STRING, description: "restaurant | cafe | bar | landmark | shopping | other" },
                   area: { type: Type.STRING, description: "區域或最近車站；不確定就空字串" },
                   note: { type: Type.STRING, description: `一句話說明為何值得去，${outLang()}，30 字內` },
                   duration: { type: Type.STRING, description: "建議停留時間，例如 1-2 小時" },

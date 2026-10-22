@@ -1027,6 +1027,14 @@ export default function App() {
     setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, suggested_plan: next } : tr)));
   };
 
+  const handleToggleReservations = async (on: boolean) => {
+    if (!selectedTrip) return;
+    const tripRef = selectedTrip;
+    await updateDoc(doc(db, 'trips', tripRef.documentId || tripRef.id), { reservations_enabled: on });
+    setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, reservations_enabled: on } : prev));
+    setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, reservations_enabled: on } : tr)));
+  };
+
   const handleSelectTrip = (trip: Trip) => {
     setSelectedTrip(trip);
     setActiveTab(OVERVIEW_TAB);
@@ -2212,6 +2220,7 @@ export default function App() {
               onAddAccommodation={() => setIsAddingAccommodation(true)}
               onAddFlight={() => setIsAddingFlight(true)}
               onImportSuggestion={handleImportSuggestion}
+              onToggleReservations={handleToggleReservations}
             />
           ) : (
           <>

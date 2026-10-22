@@ -25,6 +25,7 @@ import { t, useLang } from '../i18n';
 const CATEGORY_META: Record<Idea['category'], { icon: string; label: string; chip: string }> = {
   restaurant: { icon: '🍽', label: '餐廳', chip: 'text-rose-600 bg-rose-50 border-rose-100' },
   cafe: { icon: '☕', label: '咖啡廳', chip: 'text-amber-700 bg-amber-50 border-amber-200' },
+  bar: { icon: '🍸', label: '酒吧', chip: 'text-fuchsia-700 bg-fuchsia-50 border-fuchsia-100' },
   landmark: { icon: '🏛', label: '景點', chip: 'text-blue-600 bg-blue-50 border-blue-100' },
   shopping: { icon: '🛍', label: '購物', chip: 'text-purple-600 bg-purple-50 border-purple-100' },
   stay: { icon: '🏨', label: '住宿', chip: 'text-teal-700 bg-teal-50 border-teal-100' },
@@ -34,7 +35,7 @@ const CATEGORY_META: Record<Idea['category'], { icon: string; label: string; chi
 /** Gemini is told to return one of these, but it is a string on the wire. */
 function normalizeCategory(raw: unknown): Idea['category'] {
   const c = String(raw || '').toLowerCase();
-  return c === 'restaurant' || c === 'cafe' || c === 'landmark' || c === 'shopping' ? c : 'other';
+  return c === 'restaurant' || c === 'cafe' || c === 'bar' || c === 'landmark' || c === 'shopping' ? c : 'other';
 }
 
 /**

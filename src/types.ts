@@ -31,6 +31,15 @@ export interface Trip {
    * Imported stops are flagged rather than removed so a half-imported day
    * cannot offer the same stop twice.
    */
+  /** Opt-in: the reservation-agent only emails Muse about trips with this on. */
+  reservations_enabled?: boolean;
+  /** Headcount for bookings; falls back to the number of members. */
+  party_size?: number;
+  /** The reservation-agent's email thread for this trip; only timestamps are read here. */
+  reservation_thread?: {
+    last_request_at?: string;
+    last_reply_at?: string;
+  };
   suggested_plan?: {
     /** Where the plan came from, for the "from …" line. */
     source?: string;
@@ -151,7 +160,7 @@ export interface Idea {
   id: string;
   trip_id: string;
   title: string;
-  category: 'restaurant' | 'cafe' | 'landmark' | 'shopping' | 'stay' | 'other';
+  category: 'restaurant' | 'cafe' | 'bar' | 'landmark' | 'shopping' | 'stay' | 'other';
   /** Neighbourhood or nearest station, as free text. */
   area?: string;
   /** Why it is worth going — the one line that survives from the source. */
@@ -167,6 +176,22 @@ export interface Idea {
   status: 'idea' | 'scheduled';
   /** Set when status flips to scheduled; the day it was placed on. */
   scheduled_date?: string;
+  /**
+   * Booking state for restaurants, cafés and bars, written by the
+   * reservation-agent Cloud Run Job from Muse's email replies. The app only
+   * reads it.
+   */
+  reservation?: Reservation;
+}
+
+export interface Reservation {
+  status: 'requested' | 'booked' | 'available' | 'needs_card' | 'unavailable' | 'walk_in';
+  /** "YYYY-MM-DD HH:MM" — the booked time, or the times that can be booked. */
+  slots?: string[];
+  confirmation?: string;
+  note?: string;
+  requested_at?: string;
+  updated_at?: string;
 }
 
 /**
