@@ -68,7 +68,7 @@ def now_iso() -> str:
 def gmail_service():
     """GMAIL_TOKEN (Secret Manager, on Cloud Run) or token_muse.json (local)."""
     raw = os.environ.get("GMAIL_TOKEN") or TOKEN_FILE.read_text(encoding="utf-8")
-    creds = Credentials.from_authorized_user_info(json.loads(raw), SCOPES)
+    creds = Credentials.from_authorized_user_info(json.loads(raw.lstrip(chr(0xFEFF))), SCOPES)
     if not creds.valid:
         creds.refresh(Request())
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
@@ -180,7 +180,7 @@ WALK_IN      不收訂位。
 # ── Reply parsing ────────────────────────────────────────────────────────────
 def parse_reply(text: str, refs: dict, ideas: dict[str, dict]) -> list[dict]:
     listing = "\n".join(f"#{n} {ideas[i]['title']}" for n, i in refs.items() if i in ideas)
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
     prompt = f"""以下是訂位助理 Muse 回覆的訂位結果。請把每家店的結果整理出來。
 
 這次請求的店（編號 → 名稱）：

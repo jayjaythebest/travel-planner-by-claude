@@ -33,7 +33,12 @@ function Set-Secret($Name, $Value) {
     if ($LASTEXITCODE -ne 0) {
         gcloud secrets create $Name --replication-policy=automatic --project=$Project | Out-Null
     }
-    $Value | gcloud secrets versions add $Name --data-file=- --project=$Project | Out-Null
+    # Via a temp file: piping from PowerShell 5.1 prepends a UTF-8 BOM, which
+    # json.loads rejects on the Cloud Run side.
+    $Tmp = New-TemporaryFile
+    [IO.File]::WriteAllText($Tmp.FullName, $Value, (New-Object System.Text.UTF8Encoding $false))
+    gcloud secrets versions add $Name --data-file="$($Tmp.FullName)" --project=$Project | Out-Null
+    Remove-Item $Tmp
     gcloud secrets add-iam-policy-binding $Name --member="serviceAccount:$SA" `
         --role="roles/secretmanager.secretAccessor" --project=$Project | Out-Null
 }
@@ -71,10 +76,13 @@ if ($LASTEXITCODE -ne 0) { Write-Error "job deploy failed"; exit 1 }
 $Uri = "https://$Region-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/$Project/jobs/${Job}:run"
 $Cron = "$Job-hourly"
 $null = gcloud scheduler jobs describe $Cron --location=$Region --project=$Project 2>$null
-$Verb = if ($LASTEXITCODE -ne 0) { "create" } else { "update" }
-$Extra = if ($Verb -eq "create") { @("--http-method=POST") } else { @() }
-gcloud scheduler jobs $Verb http $Cron --schedule="0 * * * *" --time-zone="America/New_York" `
-    --uri=$Uri --oauth-service-account-email=$SA --location=$Region --project=$Project @Extra
+if ($LASTEXITCODE -ne 0) {
+    gcloud scheduler jobs create http $Cron --schedule="0 * * * *" --time-zone="America/New_York" `
+        --uri=$Uri --http-method=POST --oauth-service-account-email=$SA --location=$Region --project=$Project
+} else {
+    gcloud scheduler jobs update http $Cron --schedule="0 * * * *" --time-zone="America/New_York" `
+        --uri=$Uri --oauth-service-account-email=$SA --location=$Region --project=$Project
+}
 
 Write-Host ""
 Write-Host "=== Deployed: $Job runs hourly ==="
