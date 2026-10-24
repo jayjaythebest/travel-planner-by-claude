@@ -27,7 +27,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, settleUp, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -37,8 +37,10 @@ import { ImportItineraryModal, type ImportDraft } from './components/ImportItine
 import { DestinationPicker } from './components/DestinationPicker';
 import { TripOverview } from './components/TripOverview';
 import { MemberChips } from './components/MemberChips';
+import { CalendarSyncModal } from './components/CalendarSyncModal';
+import { SplitBalances } from './components/SplitBalances';
 import { syncTripToCalendar, CalendarError } from './services/googleCalendar';
-import { t, useLang, LangToggle } from './i18n';
+import { t, useLang, LangToggle, getLang } from './i18n';
 import { 
   collection,
   query,
@@ -52,6 +54,7 @@ import {
   setDoc,
   getDocs,
   writeBatch,
+  deleteField,
   Timestamp
 } from 'firebase/firestore';
 import { format, addDays, differenceInDays, parseISO } from 'date-fns';
@@ -494,6 +497,8 @@ export default function App() {
   const [dailyNeedSuggestion, setDailyNeedSuggestion] = useState<Record<string, string>>({}); // keyed by date
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isSyncingCalendar, setIsSyncingCalendar] = useState(false);
+  /** null = closed, '' = whole trip, a date = just that day. */
+  const [calendarPickerScope, setCalendarPickerScope] = useState<string | null>(null);
   // Holds the id of the trip being deleted, so only that card shows a spinner.
   const [deletingTripId, setDeletingTripId] = useState<string | null>(null);
   const [calendarMessage, setCalendarMessage] = useState('');
@@ -1099,6 +1104,61 @@ export default function App() {
     if (selectedTrip) loadCover(selectedTrip);
   }, [selectedTrip?.id]);
 
+  /**
+   * Put a booked reservation on the itinerary at the booked time.
+   *
+   * The end time is a typical sitting for the kind of place, since a booking
+   * only states when it starts. The stash idea flips to scheduled and any
+   * suggested-plan stop for the same place is marked imported, so neither the
+   * stash nor the 建議 card offers it again.
+   */
+  const handleAddBookingToPlan = async (idea: Idea) => {
+    if (!selectedTrip) return;
+    const r = idea.reservation;
+    const m = r?.slots?.[0]?.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/);
+    if (!r || !m) return;
+    const [, date, hh, mm] = m;
+    const sitting = idea.category === 'bar' ? 120 : idea.category === 'cafe' ? 60 : 90;
+    const endMins = (Number(hh) * 60 + Number(mm) + sitting) % (24 * 60);
+    const end = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(endMins % 60).padStart(2, '0')}`;
+    const tripRef = selectedTrip;
+
+    const docRef = await addDoc(collection(db, 'activities'), {
+      id: crypto.randomUUID(),
+      trip_id: tripRef.id,
+      idea_id: idea.id,
+      date,
+      start_time: `${hh}:${mm}`,
+      end_time: end,
+      activity: idea.title,
+      map_url: idea.map_url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([idea.title, idea.area, tripRef.country].filter(Boolean).join(' '))}`,
+      note: [r.confirmation && t('確認碼：{code}', { code: r.confirmation }), (getLang() === 'en' && r.note_en) || r.note]
+        .filter(Boolean)
+        .join(' · '),
+      is_flight: false,
+      travel_mode: 'transit',
+    });
+    geminiService.getItineraryAdvice(idea.title, tripRef.country)
+      .then(advice => { if (advice) updateDoc(docRef, { ai_advice: advice }); }).catch(() => {});
+    geminiService.getActivityPhoto(idea.title, tripRef.country)
+      .then(photoUrl => { if (photoUrl) updateDoc(docRef, { photo_url: photoUrl }); }).catch(() => {});
+    await updateDoc(doc(db, 'ideas', idea.id), { status: 'scheduled', scheduled_date: date });
+
+    const plan = tripRef.suggested_plan;
+    if (plan?.days.some(d => d.stops.some(s => s.idea_title === idea.title && !s.imported))) {
+      const next = {
+        ...plan,
+        days: plan.days.map(d => ({
+          ...d,
+          stops: d.stops.map(s => (s.idea_title === idea.title ? { ...s, imported: true } : s)),
+        })),
+      };
+      await updateDoc(doc(db, 'trips', tripRef.documentId || tripRef.id), { suggested_plan: next });
+      setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, suggested_plan: next } : prev));
+      setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, suggested_plan: next } : tr)));
+    }
+  };
+
   const handleToggleReservations = async (on: boolean) => {
     if (!selectedTrip) return;
     const tripRef = selectedTrip;
@@ -1350,7 +1410,7 @@ export default function App() {
       currency: formData.get('currency') as string,
       date: expenseForm.date,
       // Written even when empty so editing an expense can un-split it.
-      ...(tripMembers.length > 1
+      ...(splitPeople.length > 1
         ? { paid_by: splitWith.length > 0 ? splitPaidBy : '', split_with: splitWith }
         : {}),
     };
@@ -1731,28 +1791,56 @@ export default function App() {
   };
 
   /**
-   * Push this trip's activities into Google Calendar, as a full mirror.
-   *
-   * Nothing is marked "confirmed" anywhere: an activity that exists is an
-   * activity that belongs on the calendar, an edited one moves its own event,
-   * and one deleted here takes its event with it. That is only possible because
-   * trip.gcal.events remembers what the last run created — so it is written
-   * back below even when nothing was added, and a failed run deliberately
-   * writes nothing rather than a partial map that would orphan events.
+   * This viewer's calendar record for a trip. The legacy shared `gcal` map was
+   * written by whoever synced first, which in practice was the owner, so it is
+   * adopted as the owner's and nobody else's.
    */
-  const handleSyncCalendar = async () => {
-    if (!selectedTrip || isSyncingCalendar) return;
+  const myGcal = (trip: Trip) => {
+    const uid = currentUser?.id;
+    if (!uid) return undefined;
+    return trip.gcal_users?.[uid] ?? (uid === trip.owner_id && trip.gcal ? { ...trip.gcal, excluded: [] } : undefined);
+  };
+
+  /**
+   * Mirror this viewer's chosen activities into their Google Calendar.
+   *
+   * Every entry point — the whole-trip picker, a day's picker, one card's
+   * calendar icon — decides only about the activities it shows (`scopeIds`).
+   * Choices for everything else are kept, and the whole chosen set is synced,
+   * because the sync is a mirror: syncing only the scope would remove every
+   * other day's events.
+   *
+   * The map is written back even when nothing was added, and a failed run
+   * deliberately writes nothing rather than a partial map that would orphan
+   * events. The picker closes only on success, so a retry is one tap away.
+   */
+  const handleSyncCalendar = async (scopeIds: string[], excludedInScope: string[]) => {
+    if (!selectedTrip || !currentUser || isSyncingCalendar) return;
+    const tripRef = selectedTrip;
+    const uid = currentUser.id;
+    const excluded = [
+      ...(myGcal(tripRef)?.excluded ?? []).filter(id => !scopeIds.includes(id) && activities.some(a => a.id === id)),
+      ...excludedInScope,
+    ];
+    const included = activities.filter(a => !excluded.includes(a.id));
     setIsSyncingCalendar(true);
     setCalendarMessage('');
     try {
-      const result = await syncTripToCalendar(selectedTrip, activities);
-      const gcal = { events: result.events, syncedAt: new Date().toISOString() };
-      await updateDoc(doc(db, "trips", selectedTrip.documentId || selectedTrip.id), { gcal });
+      const result = await syncTripToCalendar(tripRef, included, myGcal(tripRef)?.events ?? {});
+      const mine = { events: result.events, syncedAt: new Date().toISOString(), excluded };
+      const gcal_users = { ...(tripRef.gcal_users ?? {}), [uid]: mine };
+      await updateDoc(doc(db, "trips", tripRef.documentId || tripRef.id), {
+        [`gcal_users.${uid}`]: mine,
+        // The owner's legacy map now lives under their uid; keeping both would
+        // let a later sync read the stale one.
+        ...(uid === tripRef.owner_id && tripRef.gcal ? { gcal: deleteField() } : {}),
+      });
       // trips come from fetchTrips()'s getDocs, not a listener, so the local
       // copies have to be moved by hand or the next sync reads a stale map and
       // duplicates every event.
-      setSelectedTrip(prev => (prev ? { ...prev, gcal } : prev));
-      setTrips(prev => prev.map(t => (t.id === selectedTrip.id ? { ...t, gcal } : t)));
+      const patch = (tr: Trip): Trip => ({ ...tr, gcal_users, ...(uid === tr.owner_id ? { gcal: undefined } : {}) });
+      setSelectedTrip(prev => (prev && prev.id === tripRef.id ? patch(prev) : prev));
+      setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? patch(tr) : tr)));
       setCalendarMessage(
         t('已連動 Google Calendar：新增 {added}、更新 {updated}、移除 {removed}', { added: result.added, updated: result.updated, removed: result.removed }),
       );
@@ -1761,8 +1849,21 @@ export default function App() {
       // else is a bug and must not be echoed raw into the UI.
       setCalendarMessage(err instanceof CalendarError ? err.message : t('同步失敗，請稍後再試。'));
       console.error(err);
+      throw err;
     } finally {
       setIsSyncingCalendar(false);
+    }
+  };
+
+  /** Whether this activity is on the viewer's own calendar as of their last sync. */
+  const onMyCalendar = (a: Activity) => Boolean(selectedTrip && myGcal(selectedTrip)?.events[a.id]);
+
+  /** One card's calendar icon: add it if it is not on the viewer's calendar, remove it if it is. */
+  const toggleOnCalendar = async (a: Activity) => {
+    try {
+      await handleSyncCalendar([a.id], onMyCalendar(a) ? [a.id] : []);
+    } catch {
+      // handleSyncCalendar has already shown why.
     }
   };
 
@@ -1855,7 +1956,7 @@ export default function App() {
       const parts = snapshots
         .map((snap, i) => (snap.size > 0 ? t('{n} 筆{what}', { n: snap.size, what: labels[i] }) : ''))
         .filter(Boolean);
-      const gcalCount = Object.keys(trip.gcal?.events ?? {}).length;
+      const gcalCount = Object.keys(myGcal(trip)?.events ?? {}).length;
 
       const message = [
         t('確定要刪除「{name}」嗎？', { name: trip.name }),
@@ -1962,7 +2063,21 @@ export default function App() {
       .map(id => profiles[id])
       .filter((u): u is User => Boolean(u));
   const tripMembers = selectedTrip ? membersOf(selectedTrip) : [];
-  const nameOf = (uid: string) => profiles[uid]?.username || '—';
+  /** Members plus guests: everyone an expense can be split between. */
+  const splitPeople: User[] = [
+    ...tripMembers,
+    ...(selectedTrip?.guests ?? []).map(g => ({ id: g.id, username: g.name, role: 'user' as const })),
+  ];
+  const nameOf = (uid: string) =>
+    profiles[uid]?.username || selectedTrip?.guests?.find(g => g.id === uid)?.name || '—';
+
+  const updateGuests = async (guests: { id: string; name: string }[]) => {
+    if (!selectedTrip) return;
+    const tripRef = selectedTrip;
+    await updateDoc(doc(db, 'trips', tripRef.documentId || tripRef.id), { guests });
+    setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, guests } : prev));
+    setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, guests } : tr)));
+  };
 
   useEffect(() => {
     if (isAddingFlight) setFlightPassengers(currentUser ? [currentUser.id] : []);
@@ -1985,7 +2100,7 @@ export default function App() {
   const openNewExpense = () => {
     setEditingExpense(null);
     setSplitPaidBy(currentUser?.id || '');
-    setSplitWith(tripMembers.length > 1 ? tripMembers.map(u => u.id) : []);
+    setSplitWith(splitPeople.length > 1 ? splitPeople.map(u => u.id) : []);
     setIsAddingExpense(true);
   };
 
@@ -2249,12 +2364,12 @@ export default function App() {
                       {isGeneratingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                     </button>
                     <button
-                      onClick={handleSyncCalendar}
+                      onClick={() => setCalendarPickerScope('')}
                       disabled={isSyncingCalendar}
                       className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors disabled:opacity-50"
                       title={
-                        selectedTrip.gcal?.syncedAt
-                          ? t('連動 Google Calendar（上次同步 {at}）', { at: format(parseISO(selectedTrip.gcal.syncedAt), 'MM/dd HH:mm') })
+                        myGcal(selectedTrip)?.syncedAt
+                          ? t('連動 Google Calendar（上次同步 {at}）', { at: format(parseISO(myGcal(selectedTrip)!.syncedAt), 'MM/dd HH:mm') })
                           : t('連動 Google Calendar')
                       }
                     >
@@ -2347,6 +2462,7 @@ export default function App() {
               onAddFlight={() => setIsAddingFlight(true)}
               onImportSuggestion={handleImportSuggestion}
               onToggleReservations={handleToggleReservations}
+              onAddBookingToPlan={handleAddBookingToPlan}
               onCoverError={() => selectedTrip && loadCover(selectedTrip, true)}
             />
           ) : (
@@ -2429,6 +2545,16 @@ export default function App() {
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">{t('今日行程')}</h3>
+              <div className="flex items-center gap-1.5">
+              {currentActivities.length > 0 && (
+                <button
+                  onClick={() => setCalendarPickerScope(activeTab)}
+                  disabled={isSyncingCalendar}
+                  className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full border bg-zinc-50 text-zinc-500 border-zinc-200 hover:border-emerald-200 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                >
+                  <CalendarCheck size={11} /> {t('加入日曆')}
+                </button>
+              )}
               <button
                 onClick={() => { setDailyNeedOpen(o => !o); setDailyNeedSuggestion(s => ({ ...s, [activeTab]: '' })); }}
                 className={cn(
@@ -2440,6 +2566,7 @@ export default function App() {
               >
                 <Sparkles size={11} /> {t('今日需求')}
               </button>
+              </div>
             </div>
 
             {/* ── AI Daily Need Input ── */}
@@ -2737,6 +2864,17 @@ export default function App() {
                                 </button>
                               </div>
                             )}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleOnCalendar(activity); }}
+                              disabled={isSyncingCalendar}
+                              title={onMyCalendar(activity) ? t('從我的 Google 日曆移除') : t('加入我的 Google 日曆')}
+                              className={cn(
+                                "absolute bottom-3 right-3 p-1 transition-colors disabled:opacity-40",
+                                onMyCalendar(activity) ? "text-emerald-500 hover:text-red-500" : "text-zinc-300 hover:text-emerald-600",
+                              )}
+                            >
+                              <CalendarCheck size={13} />
+                            </button>
                             <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(activity.id); }}
                               className="absolute top-3 right-3 p-1.5 text-zinc-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
                               <X size={14} />
@@ -2767,8 +2905,19 @@ export default function App() {
                                     <span className="text-[10px] text-stone-400 font-medium flex-shrink-0">～ {activity.end_time}</span>
                                   )}
                                 </div>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleOnCalendar(activity); }}
+                                  disabled={isSyncingCalendar}
+                                  title={onMyCalendar(activity) ? t('從我的 Google 日曆移除') : t('加入我的 Google 日曆')}
+                                  className={cn(
+                                    "p-1.5 transition-colors flex-shrink-0 ml-1 disabled:opacity-40",
+                                    onMyCalendar(activity) ? "text-emerald-500 hover:text-red-500" : "text-stone-300 hover:text-emerald-600",
+                                  )}
+                                >
+                                  <CalendarCheck size={13} />
+                                </button>
                                 <button onClick={(e) => { e.stopPropagation(); handleDeleteActivity(activity.id); }}
-                                  className="p-1.5 text-stone-300 hover:text-red-500 transition-colors flex-shrink-0 ml-1">
+                                  className="p-1.5 text-stone-300 hover:text-red-500 transition-colors flex-shrink-0">
                                   <Trash2 size={13} />
                                 </button>
                               </div>
@@ -3557,7 +3706,7 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              {tripMembers.length > 1 && (
+              {splitPeople.length > 1 && (
                 <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-xl space-y-3">
                   <div className="flex items-center gap-2">
                     <label className="text-sm font-bold text-zinc-600 flex-shrink-0">{t('付款人')}</label>
@@ -3566,7 +3715,7 @@ export default function App() {
                       onChange={(e) => setSplitPaidBy(e.target.value)}
                       className="flex-1 p-2 bg-white border border-zinc-200 rounded-lg text-sm"
                     >
-                      {tripMembers.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                      {splitPeople.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
                     </select>
                   </div>
                   <div>
@@ -3574,14 +3723,14 @@ export default function App() {
                       <span className="text-sm font-bold text-zinc-600">{t('平分給')}</span>
                       <button
                         type="button"
-                        onClick={() => setSplitWith(splitWith.length === tripMembers.length ? [] : tripMembers.map(u => u.id))}
+                        onClick={() => setSplitWith(splitWith.length === splitPeople.length ? [] : splitPeople.map(u => u.id))}
                         className="text-[11px] font-bold text-zinc-400 hover:text-zinc-800"
                       >
-                        {splitWith.length === tripMembers.length ? t('全部取消') : t('全選')}
+                        {splitWith.length === splitPeople.length ? t('全部取消') : t('全選')}
                       </button>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
-                      {tripMembers.map(u => {
+                      {splitPeople.map(u => {
                         const on = splitWith.includes(u.id);
                         return (
                           <button
@@ -3612,6 +3761,19 @@ export default function App() {
               <button type="submit" className="w-full py-4 bg-zinc-900 text-white rounded-xl font-bold shadow-lg">{editingExpense ? t('儲存變更') : t('確認記帳')}</button>
             </form>
           </Modal>
+        )}
+
+        {calendarPickerScope !== null && selectedTrip && (
+          <CalendarSyncModal
+            scopeDate={calendarPickerScope || undefined}
+            trip={selectedTrip}
+            activities={activities}
+            dates={getDateRange()}
+            synced={myGcal(selectedTrip)?.events ?? {}}
+            initialExcluded={myGcal(selectedTrip)?.excluded ?? []}
+            onClose={() => setCalendarPickerScope(null)}
+            onSync={handleSyncCalendar}
+          />
         )}
 
         {isExportModalOpen && (
@@ -3879,47 +4041,15 @@ export default function App() {
                 </div>
               </div>
 
-              {(() => {
-                const split = expenses.filter(e => e.paid_by && e.split_with && e.split_with.length > 0);
-                if (split.length === 0) return null;
-                const balances: Record<string, number> = {};
-                for (const e of split) {
-                  const amt = toCur(e);
-                  balances[e.paid_by!] = (balances[e.paid_by!] || 0) + amt;
-                  for (const id of e.split_with!) balances[id] = (balances[id] || 0) - amt / e.split_with!.length;
-                }
-                const transfers = settleUp(balances);
-                return (
-                  <div className="space-y-3">
-                    <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">{t('分帳結算 ({cur})', { cur })}</h4>
-                    <div className="grid grid-cols-2 gap-2">
-                      {Object.entries(balances).map(([id, v]) => (
-                        <div key={id} className="flex items-center justify-between p-2.5 bg-zinc-50 border border-zinc-100 rounded-xl">
-                          <span className="text-xs font-bold text-zinc-700 truncate">{nameOf(id)}</span>
-                          <span className={cn("text-xs font-bold tabular-nums", v > 0.5 ? "text-emerald-600" : v < -0.5 ? "text-red-500" : "text-zinc-400")}>
-                            {v > 0.5 ? '+' : v < -0.5 ? '−' : ''}${Math.round(Math.abs(v)).toLocaleString()}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    {transfers.length === 0 ? (
-                      <p className="text-xs text-zinc-400">{t('已經兩清')}</p>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {transfers.map((tr, i) => (
-                          <div key={i} className="flex items-center justify-between p-2.5 bg-white border border-zinc-100 rounded-xl text-xs">
-                            <span className="text-zinc-700">
-                              <span className="font-bold">{nameOf(tr.from)}</span> → <span className="font-bold">{nameOf(tr.to)}</span>
-                            </span>
-                            <span className="font-bold text-zinc-900 tabular-nums">${Math.round(tr.amount).toLocaleString()}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <p className="text-[10px] text-zinc-400">{t('只計入有勾選平分對象的支出。+ 代表別人欠他，− 代表他要付。')}</p>
-                  </div>
-                );
-              })()}
+              <SplitBalances
+                people={splitPeople}
+                guestIds={new Set((selectedTrip.guests ?? []).map(g => g.id))}
+                expenses={expenses}
+                currency={cur}
+                toCur={toCur}
+                onAddGuest={name => updateGuests([...(selectedTrip.guests ?? []), { id: `guest_${crypto.randomUUID().slice(0, 8)}`, name }])}
+                onRemoveGuest={id => updateGuests((selectedTrip.guests ?? []).filter(g => g.id !== id))}
+              />
 
               <div className="bg-zinc-900 text-white p-5 rounded-2xl shadow-lg">
                 <div className="text-[10px] font-bold uppercase opacity-60 mb-1">{t('總計支出 ({cur})', { cur })}</div>

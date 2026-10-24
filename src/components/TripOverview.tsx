@@ -163,8 +163,30 @@ const fmtSlot = (s: string) => {
  * place themselves, or gave up on it. `manual` tells the reservation-agent to
  * leave the place alone from then on.
  */
-function Reservations({ ideas, trip, onToggle }: { ideas: Idea[]; trip: Trip; onToggle: (on: boolean) => Promise<void> }) {
+function Reservations({
+  ideas,
+  trip,
+  activities,
+  dates,
+  onToggle,
+  onAddToPlan,
+  onJumpToDay,
+}: {
+  ideas: Idea[];
+  trip: Trip;
+  activities: Activity[];
+  dates: string[];
+  onToggle: (on: boolean) => Promise<void>;
+  onAddToPlan: (idea: Idea) => Promise<void>;
+  onJumpToDay: (date: string) => void;
+}) {
   const [saving, setSaving] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+  /** The activity a booking already became, by idea id or, for older rows, by name and day. */
+  const placedAs = (i: Idea) => {
+    const date = i.reservation?.slots?.[0]?.slice(0, 10);
+    return activities.find(a => a.idea_id === i.id || (a.activity === i.title && a.date === date));
+  };
   const [open, toggleOpen] = useCollapsed('reservations', true);
   const food = ideas.filter(i => FOOD_ICON[i.category]);
   if (food.length === 0) return null;
@@ -248,6 +270,36 @@ function Reservations({ ideas, trip, onToggle }: { ideas: Idea[]; trip: Trip; on
                         {r.note && <div className="text-[10px] text-zinc-400 leading-snug">{(getLang() === 'en' && r.note_en) || r.note}</div>}
                       </div>
                     ) : null}
+                    {r.status === 'booked' && (() => {
+                      const placed = placedAs(i);
+                      if (placed) {
+                        const day = dates.indexOf(placed.date) + 1;
+                        return (
+                          <button onClick={() => onJumpToDay(placed.date)} className="pl-6 mt-2 text-[10px] font-bold text-zinc-500 hover:text-zinc-900">
+                            {day > 0 ? t('✓ 已在 Day {n} 行程 →', { n: day }) : t('✓ 已加入行程')}
+                          </button>
+                        );
+                      }
+                      const slot = r.slots?.[0];
+                      if (!slot || !/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(slot)) return null;
+                      return (
+                        <div className="pl-6 mt-2">
+                          <button
+                            onClick={async () => {
+                              if (adding) return;
+                              setAdding(i.id);
+                              try { await onAddToPlan(i); } catch (err) { console.error(err); alert(t('加入失敗，請再試一次。')); }
+                              setAdding(null);
+                            }}
+                            disabled={adding !== null}
+                            className="flex items-center gap-1 text-[10px] font-bold text-white bg-zinc-900 px-2.5 py-1 rounded-lg hover:bg-zinc-700 transition-colors disabled:opacity-50"
+                          >
+                            {adding === i.id ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />}
+                            {t('加入行程（{at}）', { at: fmtSlot(slot) })}
+                          </button>
+                        </div>
+                      );
+                    })()}
                     {r.status !== 'booked' && (
                       <div className="pl-6 mt-2 flex gap-3">
                         <button onClick={() => mark(i, 'booked')} className="text-[10px] font-bold text-emerald-600 hover:underline">
@@ -292,6 +344,7 @@ export function TripOverview({
   onImportSuggestion,
   onToggleReservations,
   onCoverError,
+  onAddBookingToPlan,
 }: {
   trip: Trip;
   dates: string[];
@@ -309,6 +362,7 @@ export function TripOverview({
   onImportSuggestion: (date: string, stopIds: string[]) => Promise<void>;
   onToggleReservations: (on: boolean) => Promise<void>;
   onCoverError: () => void;
+  onAddBookingToPlan: (idea: Idea) => Promise<void>;
 }) {
   useLang();
   const today = new Date();
@@ -537,7 +591,15 @@ export function TripOverview({
       )}
 
       {/* ── Reservations ── */}
-      <Reservations ideas={ideas} trip={trip} onToggle={onToggleReservations} />
+      <Reservations
+        ideas={ideas}
+        trip={trip}
+        activities={activities}
+        dates={dates}
+        onToggle={onToggleReservations}
+        onAddToPlan={onAddBookingToPlan}
+        onJumpToDay={onJumpToDay}
+      />
 
       {/* ── Idea stash ── */}
       <IdeaStash

@@ -16,6 +16,19 @@ export interface Trip {
    * Activity are write-sensitive (see CLAUDE.md) and do not need a sync writing
    * to every one of them.
    */
+  /**
+   * Per traveller: what this app put in THAT person's Google Calendar, and
+   * which activities they chose to leave out. Keyed by uid because each
+   * member syncs to their own calendar — one shared map made a second member's
+   * sync try to patch event ids that only existed in the first one's calendar.
+   */
+  gcal_users?: Record<string, {
+    events: Record<string, string>;
+    syncedAt: string;
+    /** Activity ids left off. Stored as exclusions so new activities default to included. */
+    excluded?: string[];
+  }>;
+  /** Legacy single-calendar map, from before gcal_users. Read once as the owner's. */
   gcal?: {
     /** activity id -> Google event id. */
     events: Record<string, string>;
@@ -31,6 +44,12 @@ export interface Trip {
    * Imported stops are flagged rather than removed so a half-imported day
    * cannot offer the same stop twice.
    */
+  /**
+   * People who share costs but are not on the app. They only take part in
+   * expense splitting, under ids prefixed "guest_" so they can never collide
+   * with a Firebase uid.
+   */
+  guests?: { id: string; name: string }[];
   /** Destination photo for the overview header, fetched once and cached here. */
   cover_url?: string;
   /** Opt-in: the reservation-agent only emails Muse about trips with this on. */
@@ -112,6 +131,8 @@ export interface Activity {
    * honest reading of a flight added when the trip had one traveller.
    */
   passengers?: string[];
+  /** The stash idea this activity was placed from, when it came from a booking. */
+  idea_id?: string;
 }
 
 export interface Accommodation {

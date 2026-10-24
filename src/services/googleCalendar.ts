@@ -300,21 +300,25 @@ export type SyncResult = {
 };
 
 /**
- * Mirror a trip's activities into the user's primary calendar.
+ * Mirror the chosen activities into the user's primary calendar.
  *
- * Deliberately a full mirror rather than an append: the previous run's map says
- * what this app already put there, so an edited activity patches its own event
- * and one deleted in the app takes its event with it. Pressing the button twice
+ * Deliberately a full mirror rather than an append: `previous` — this user's
+ * map from their last run — says what this app already put there, so an
+ * edited activity patches its own event, and one that was deleted in the app
+ * or unticked in the picker has its event removed. Pressing the button twice
  * changes nothing the second time, which is what makes an expired token or a
  * half-finished run safe to just retry.
  */
-export async function syncTripToCalendar(trip: Trip, activities: Activity[]): Promise<SyncResult> {
+export async function syncTripToCalendar(
+  trip: Trip,
+  activities: Activity[],
+  previous: Record<string, string>,
+): Promise<SyncResult> {
   if (!isCalendarConfigured()) {
     throw new CalendarError(t('尚未設定 VITE_GOOGLE_OAUTH_CLIENT_ID，無法連動 Google Calendar。'));
   }
 
   const token = await getAccessToken();
-  const previous = trip.gcal?.events ?? {};
   const events: Record<string, string> = {};
   let added = 0;
   let updated = 0;
