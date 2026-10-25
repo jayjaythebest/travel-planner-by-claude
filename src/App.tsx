@@ -24,11 +24,23 @@ import {
   Users,
   CalendarCheck,
   FileUp,
-  LayoutGrid
+  LayoutGrid,
+  Car,
+  TrainFront,
+  Footprints,
+  Lightbulb,
+  Hourglass,
+  KeyRound,
+  Luggage,
+  Clock,
+  Timer,
+  PlaneTakeoff,
+  PlaneLanding,
+  Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
-import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
+import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User, TransferEstimate } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
@@ -713,11 +725,95 @@ export default function App() {
     if (dayActivities.length < 2) return;
     dayActivities.forEach((activity, idx) => {
       if (idx === dayActivities.length - 1) return;
+      // A flight's "activity" is a label, not a place: the gap between two legs
+      // is a layover, and getting to or from the airport is the transfer card.
+      if (activity.is_flight || dayActivities[idx + 1].is_flight) return;
       if (!activity.travel_time_to_next) {
         calcAndSaveTravelTime(activity, dayActivities[idx + 1], selectedTrip.country);
       }
     });
   }, [activities, activeTab, selectedTrip]);
+
+  /**
+   * The flights on a day that need a ride to or from the lodging: the last
+   * flight of the day when there is somewhere to sleep that night, and the
+   * first flight when there was somewhere to sleep the night before.
+   */
+  const transferLegs = (date: string) => {
+    const flights = activities
+      .filter(a => a.date === date && a.is_flight)
+      .sort((a, b) => a.start_time.localeCompare(b.start_time));
+    if (flights.length === 0) return [];
+    const tonight = accommodations.find(a => a.check_in <= date && date < a.check_out);
+    const lastNight = accommodations.find(a => a.check_in < date && date <= a.check_out);
+    const legs: { dir: 'arrive' | 'depart'; flight: Activity; acc: Accommodation }[] = [];
+    if (lastNight) legs.push({ dir: 'depart', flight: flights[0], acc: lastNight });
+    if (tonight) legs.push({ dir: 'arrive', flight: flights[flights.length - 1], acc: tonight });
+    return legs;
+  };
+
+  // Work out each transfer once and keep it on the flight, like travel times.
+  const transferInFlight = React.useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!selectedTrip || !activeTab) return;
+    for (const { dir, flight, acc } of transferLegs(activeTab)) {
+      if (flight.transfer_estimates?.[dir]?.acc_id === acc.id) continue;
+      const key = `${flight.id}:${dir}:${acc.id}`;
+      if (transferInFlight.current.has(key)) continue;
+      transferInFlight.current.add(key);
+      const p = parseFlightActivity(flight.activity);
+      geminiService
+        .getAirportTransfer({
+          direction: dir,
+          airport: (dir === 'arrive' ? p?.arrival : p?.departure) || flight.activity,
+          address: acc.address || acc.name,
+          country: selectedTrip.country,
+          time: dir === 'arrive' ? flight.end_time : flight.start_time,
+        })
+        .then(data => {
+          if (data?.taxi) updateDoc(doc(db, 'activities', flight.id), { [`transfer_estimates.${dir}`]: { acc_id: acc.id, data } });
+        })
+        .catch(err => console.error('transfer estimate', err));
+    }
+  }, [activities, accommodations, activeTab, selectedTrip]);
+
+  const shiftTime = (hhmm: string, minutes: number) => {
+    const [h, m] = hhmm.split(':').map(Number);
+    const total = Math.min(Math.max(h * 60 + m + minutes, 0), 23 * 60 + 59);
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  };
+
+  /**
+   * Turn a transfer card into an activity. Arrivals start 45 minutes after
+   * landing (immigration and bags); departures leave so as to reach the
+   * airport two hours before take-off.
+   */
+  const addTransfer = async (dir: 'arrive' | 'depart', flight: Activity, acc: Accommodation, est: TransferEstimate) => {
+    if (!selectedTrip) return;
+    const p = parseFlightActivity(flight.activity);
+    const airport = (dir === 'arrive' ? p?.arrival : p?.departure) || '';
+    const place = acc.address || acc.name;
+    const start = dir === 'arrive' ? shiftTime(flight.end_time, 45) : shiftTime(flight.start_time, -120 - est.taxi.minutes);
+    const end = dir === 'arrive' ? shiftTime(start, est.taxi.minutes) : shiftTime(flight.start_time, -120);
+    const [from, to] = dir === 'arrive' ? [airport, place] : [place, airport];
+    await addDoc(collection(db, 'activities'), {
+      id: crypto.randomUUID(),
+      trip_id: selectedTrip.id,
+      transfer_of: `${flight.id}:${dir}`,
+      date: flight.date,
+      start_time: start,
+      end_time: end,
+      activity: dir === 'arrive' ? t('機場 → 住宿') : t('住宿 → 機場'),
+      map_url: `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(from + ' ' + selectedTrip.country)}&destination=${encodeURIComponent(to)}&travelmode=driving`,
+      note: [
+        t('計程車／Uber 約 {m} 分鐘 · {cost}', { m: est.taxi.minutes, cost: est.taxi.cost }),
+        est.transit && t('大眾運輸 約 {m} 分鐘 · {cost} · {route}', { m: est.transit.minutes, cost: est.transit.cost, route: est.transit.route }),
+        est.tip,
+      ].filter(Boolean).join('\n'),
+      is_flight: false,
+      travel_mode: 'driving',
+    });
+  };
 
   const calculateAllTravelTimes = async () => {
     const times: Record<string, string> = {};
@@ -2272,7 +2368,7 @@ export default function App() {
                 <span className="px-2 py-0.5 bg-white/70 text-zinc-700 text-[10px] font-bold rounded-full border border-white/80 tracking-wide">
                   {flagUrl(trip.country)
                     ? <img src={flagUrl(trip.country)!} alt="" className="inline-block w-4 h-3 object-cover rounded-[2px] mr-1 -mt-0.5 shadow-sm" />
-                    : <span className="mr-0.5">{theme.flagEmoji}</span>}
+                    : <Plane size={11} className="inline mr-1 -mt-0.5 text-zinc-400" />}
                   {trip.country}
                 </span>
                 <span className="px-2 py-0.5 bg-white/70 text-zinc-500 text-[10px] font-medium rounded-full border border-white/80">
@@ -2310,6 +2406,64 @@ export default function App() {
       .filter(a => a.date === activeTab)
       .sort((a, b) => a.start_time.localeCompare(b.start_time));
     const isOverview = activeTab === OVERVIEW_TAB;
+
+    /** The airport <-> lodging card for one leg; gone once it has been added as an activity. */
+    const renderTransfer = ({ dir, flight, acc }: { dir: 'arrive' | 'depart'; flight: Activity; acc: Accommodation }) => {
+      if (activities.some(a => a.transfer_of === `${flight.id}:${dir}`)) return null;
+      const est = flight.transfer_estimates?.[dir]?.acc_id === acc.id ? flight.transfer_estimates[dir]!.data : null;
+      const p = parseFlightActivity(flight.activity);
+      const airport = (dir === 'arrive' ? p?.arrival : p?.departure) || '';
+      const place = acc.address || acc.name;
+      const leaveAt = est && dir === 'depart' ? shiftTime(flight.start_time, -120 - est.taxi.minutes) : null;
+      return (
+        <div key={`${flight.id}-${dir}`} className="my-2 ml-1 rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/40 p-3 space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                <Car size={12} className="text-emerald-600" />
+                {dir === 'arrive' ? t('機場 → 住宿') : t('住宿 → 機場')}
+              </div>
+              <div className="text-[10px] text-emerald-900/50 truncate">
+                {dir === 'arrive' ? `${airport} → ${place}` : `${place} → ${airport}`}
+              </div>
+            </div>
+            {est && (
+              <button
+                onClick={() => addTransfer(dir, flight, acc, est).catch(err => { console.error(err); alert(t('加入失敗，請再試一次。')); })}
+                className="flex items-center gap-1 text-[10px] font-bold text-white bg-emerald-600 px-2 py-1 rounded-lg hover:bg-emerald-700 transition-colors flex-shrink-0"
+              >
+                <Plus size={10} /> {t('加入行程')}
+              </button>
+            )}
+          </div>
+          {!est ? (
+            <div className="text-[11px] text-emerald-700/60 animate-pulse">{t('估算交通時間與費用中...')}</div>
+          ) : (
+            <div className="space-y-1 text-[11px]">
+              <div className="flex gap-2 text-zinc-700">
+                <Car size={12} className="flex-shrink-0 mt-0.5 text-zinc-400" />
+                <span>{t('計程車／Uber 約 {m} 分鐘 · {cost}', { m: est.taxi.minutes, cost: est.taxi.cost })}</span>
+              </div>
+              {est.transit && (
+                <div className="flex gap-2 text-zinc-700">
+                  <TrainFront size={12} className="flex-shrink-0 mt-0.5 text-zinc-400" />
+                  <span>{t('大眾運輸 約 {m} 分鐘 · {cost} · {route}', { m: est.transit.minutes, cost: est.transit.cost, route: est.transit.route })}</span>
+                </div>
+              )}
+              {leaveAt && (
+                <div className="text-[10px] font-bold text-emerald-700">{t('建議 {at} 從住宿出發（起飛前 2 小時到機場）', { at: leaveAt })}</div>
+              )}
+              {est.tip && (
+                <div className="flex gap-2 text-[10px] text-zinc-400 leading-snug">
+                  <Lightbulb size={11} className="flex-shrink-0 mt-px" />
+                  <span>{est.tip}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    };
     // parseISO(OVERVIEW_TAB) is an Invalid Date and every comparison against
     // it is false, so this would quietly return [] anyway — but only by
     // accident. The guard says so out loud.
@@ -2482,7 +2636,7 @@ export default function App() {
                       <Hotel size={16} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide mb-0.5">{t('🔑 今日入住')}</div>
+                      <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide mb-0.5 flex items-center gap-1"><KeyRound size={10} />{t('今日入住')}</div>
                       <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
                       <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}</div>
                     </div>
@@ -2504,7 +2658,7 @@ export default function App() {
                       <Hotel size={16} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-0.5">{t('🧳 今日退房')}</div>
+                      <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-0.5 flex items-center gap-1"><Luggage size={10} />{t('今日退房')}</div>
                       <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
                       <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}</div>
                     </div>
@@ -2645,8 +2799,8 @@ export default function App() {
                                 {s.area && <div className="text-[10px] text-stone-400 mt-0.5 flex items-center gap-1"><MapPin size={9}/>{s.area}</div>}
                               </div>
                               {s.suggestedTime && (
-                                <span className="text-xs font-bold bg-amber-50 text-amber-700 border border-amber-100 px-2 py-0.5 rounded-full flex-shrink-0">
-                                  🕐 {s.suggestedTime}
+                                <span className="text-xs font-medium bg-amber-100/80 text-amber-800 px-1.5 py-0.5 rounded flex-shrink-0 flex items-center gap-1">
+                                  <Clock size={11} /> {s.suggestedTime}
                                 </span>
                               )}
                             </div>
@@ -2719,9 +2873,16 @@ export default function App() {
             ) : (
               /* ── Timeline ── */
               <div>
+                {(() => {
+                  const dep = transferLegs(activeTab).find(l => l.dir === 'depart');
+                  return dep && currentActivities[0]?.id === dep.flight.id ? renderTransfer(dep) : null;
+                })()}
                 {currentActivities.map((activity, idx) => {
                   const isLast = idx === currentActivities.length - 1;
                   const next = currentActivities[idx + 1];
+                  const legs = transferLegs(activeTab);
+                  const arriveHere = legs.find(l => l.dir === 'arrive' && l.flight.id === activity.id);
+                  const departNext = next && legs.find(l => l.dir === 'depart' && l.flight.id === next.id);
 
                   // Flight card helpers
                   const isOutbound = isOutboundDate(activity.date, selectedTrip!.start_date, selectedTrip!.end_date);
@@ -2735,19 +2896,19 @@ export default function App() {
                   const arrLabel = flightParsed?.arrival.split(' ').slice(0, 2).join(' ') || '';
 
                   // Transport connector helpers
-                  const modeIcon = next?.travel_mode === 'walking' ? '🚶' : next?.travel_mode === 'driving' ? '🚕' : '🚇';
+                  const ModeIcon = next?.travel_mode === 'walking' ? Footprints : next?.travel_mode === 'driving' ? Car : TrainFront;
                   const gmMode = next?.travel_mode === 'walking' ? 'walking' : next?.travel_mode === 'driving' ? 'driving' : 'transit';
                   const mapsUrl = next
                     ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(activity.activity + ', ' + selectedTrip!.country)}&destination=${encodeURIComponent(next.activity + ', ' + selectedTrip!.country)}&travelmode=${gmMode}`
                     : '';
 
                   // AI advice renderer (shared)
-                  const TYPE_META: Record<string, { icon: string; label: string; color: string }> = {
-                    restaurant: { icon: '🍽', label: t('餐廳'), color: 'text-rose-600 bg-rose-50 border-rose-100' },
-                    cafe:       { icon: '☕', label: t('咖啡廳'), color: 'text-amber-700 bg-amber-50 border-amber-200' },
-                    landmark:   { icon: '🏛', label: t('景點'), color: 'text-blue-600 bg-blue-50 border-blue-100' },
-                    shopping:   { icon: '🛍', label: t('購物'), color: 'text-purple-600 bg-purple-50 border-purple-100' },
-                    other:      { icon: '✨', label: t('其他'), color: 'text-stone-600 bg-stone-100 border-stone-200' },
+                  const TYPE_META: Record<string, { label: string; color: string }> = {
+                    restaurant: { label: t('餐廳'), color: 'bg-orange-100/80 text-orange-800' },
+                    cafe:       { label: t('咖啡廳'), color: 'bg-amber-100/80 text-amber-800' },
+                    landmark:   { label: t('景點'), color: 'bg-sky-100/80 text-sky-800' },
+                    shopping:   { label: t('購物'), color: 'bg-purple-100/80 text-purple-800' },
+                    other:      { label: t('其他'), color: 'bg-zinc-100 text-zinc-600' },
                   };
                   const renderAiAdvice = () => {
                     if (!activity.ai_advice) return null;
@@ -2760,7 +2921,7 @@ export default function App() {
                           <div className="flex items-center gap-2 mb-1.5">
                             <Sparkles size={10} className="text-amber-500" />
                             <span className="text-amber-700 font-bold text-[10px] uppercase tracking-wide">{t('AI 建議')}</span>
-                            <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full border", meta.color)}>{meta.icon} {meta.label}</span>
+                            <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", meta.color)}>{meta.label}</span>
                           </div>
                           {p.headline && <p className="font-bold text-stone-700 mb-1.5">{p.headline}</p>}
                           {Array.isArray(p.tips) && p.tips.length > 0 && (
@@ -2819,11 +2980,11 @@ export default function App() {
                           >
                             <div className="flex items-center justify-between mb-3">
                               <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", isOutbound ? "bg-blue-100 text-blue-600" : "bg-violet-100 text-violet-600")}>
-                                {isOutbound ? t('✈ 去程') : t('✈ 回程')}
+                                <span className="flex items-center gap-1"><Plane size={10} />{isOutbound ? t('去程') : t('回程')}</span>
                               </span>
                               <span className="text-xs font-black text-zinc-700 tracking-widest">{flightParsed?.flightNo ?? activity.activity.slice(0, 10)}</span>
                               <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", isOutbound ? "bg-blue-100 text-blue-600" : "bg-violet-100 text-violet-600")}>
-                                ⏱ {flightDuration}
+                                <span className="flex items-center gap-1"><Timer size={10} />{flightDuration}</span>
                               </span>
                             </div>
                             <div className="flex items-center gap-3 mb-3">
@@ -2832,11 +2993,11 @@ export default function App() {
                                 <div className="text-[9px] text-zinc-400 mt-0.5 leading-tight">{depLabel}</div>
                               </div>
                               <div className="flex-1 flex items-center gap-1 min-w-0">
-                                <span className="text-base">🛫</span>
+                                <PlaneTakeoff size={14} className={cn("flex-shrink-0", isOutbound ? "text-blue-300" : "text-violet-300")} />
                                 <div className={cn("flex-1 border-t-2 border-dashed", isOutbound ? "border-blue-200" : "border-violet-200")} />
                                 <Plane size={13} className={cn("flex-shrink-0", isOutbound ? "text-blue-400" : "text-violet-400")} />
                                 <div className={cn("flex-1 border-t-2 border-dashed", isOutbound ? "border-blue-200" : "border-violet-200")} />
-                                <span className="text-base">🛬</span>
+                                <PlaneLanding size={14} className={cn("flex-shrink-0", isOutbound ? "text-blue-300" : "text-violet-300")} />
                               </div>
                               <div className="text-center w-14 flex-shrink-0">
                                 <div className={cn("text-2xl font-black tracking-tight leading-none", isOutbound ? "text-blue-700" : "text-violet-700")}>{arrCode}</div>
@@ -2923,7 +3084,7 @@ export default function App() {
                                 </button>
                               </div>
                               {activity.note && (
-                                <p className="text-xs text-stone-500 mb-2.5 leading-relaxed">{activity.note}</p>
+                                <p className="text-xs text-stone-500 mb-2.5 leading-relaxed whitespace-pre-line">{activity.note}</p>
                               )}
                               {activity.map_url && (
                                 <div className="flex justify-end">
@@ -2939,13 +3100,25 @@ export default function App() {
                           </motion.div>
                         )}
 
+                        {arriveHere && renderTransfer(arriveHere)}
+                        {departNext && renderTransfer(departNext)}
+
+                        {/* Layover between two legs of a connection */}
+                        {!isLast && next && activity.is_flight && next.is_flight && (
+                          <div className="py-1.5 pl-1">
+                            <span className="inline-flex items-center gap-1.5 text-xs text-blue-500 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+                              <Hourglass size={11} /> {t('轉機 {d}', { d: calcFlightDuration(activity.end_time, next.start_time) })}
+                            </span>
+                          </div>
+                        )}
+
                         {/* Transport connector */}
-                        {!isLast && next && (
+                        {!isLast && next && !activity.is_flight && !next.is_flight && (
                           <div className="py-1.5 pl-1">
                             <a href={mapsUrl} target="_blank" rel="noopener noreferrer"
                               onClick={e => e.stopPropagation()}
                               className="inline-flex items-center gap-1.5 text-xs text-stone-400 bg-stone-50 px-3 py-1 rounded-full border border-stone-100 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200 transition-colors">
-                              <span>{modeIcon}</span>
+                              <ModeIcon size={11} />
                               <span>{activity.travel_time_to_next ?? <span className="animate-pulse">{t('計算中...')}</span>}</span>
                               <MapPin size={10} className="opacity-50" />
                             </a>
@@ -3378,7 +3551,7 @@ export default function App() {
                         )}
                       >
                         <div className={cn("w-4 h-4 mt-0.5 rounded border flex-shrink-0 flex items-center justify-center text-[10px]", c.picked ? "bg-zinc-900 border-zinc-900 text-white" : "border-zinc-300")}>
-                          {c.picked && '✓'}
+                          {c.picked && <Check size={11} strokeWidth={3} />}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">

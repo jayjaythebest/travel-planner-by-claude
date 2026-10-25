@@ -12,12 +12,16 @@ import {
   Plus,
   Loader2,
   ChevronDown,
+  Check,
+  X as XIcon,
+  KeyRound,
+  Luggage,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate, flagUrl } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation } from '../types';
-import { IdeaStash, isInReservations } from './IdeaStash';
+import { IdeaStash, isInReservations, CATEGORY_META } from './IdeaStash';
 import { Section, useCollapsed } from './Section';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -138,15 +142,15 @@ function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (sto
 }
 
 const RES_META: Record<Reservation['status'], { label: string; chip: string }> = {
-  requested: { label: '已請 Muse 查詢', chip: 'bg-zinc-100 text-zinc-500 border-zinc-200' },
-  booked: { label: '已訂位', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  available: { label: '可訂', chip: 'bg-blue-50 text-blue-600 border-blue-100' },
-  needs_card: { label: '需綁卡', chip: 'bg-amber-50 text-amber-700 border-amber-200' },
-  unavailable: { label: '訂不到', chip: 'bg-red-50 text-red-500 border-red-100' },
-  walk_in: { label: '現場排隊', chip: 'bg-violet-50 text-violet-600 border-violet-100' },
+  requested: { label: '已請 Muse 查詢', chip: 'bg-zinc-100 text-zinc-600' },
+  booked: { label: '已訂位', chip: 'bg-emerald-100/80 text-emerald-800' },
+  available: { label: '可訂', chip: 'bg-sky-100/80 text-sky-800' },
+  needs_card: { label: '需綁卡', chip: 'bg-amber-100/80 text-amber-800' },
+  unavailable: { label: '訂不到', chip: 'bg-red-100/80 text-red-800' },
+  walk_in: { label: '現場排隊', chip: 'bg-violet-100/80 text-violet-800' },
 };
 const RES_ORDER: Reservation['status'][] = ['booked', 'available', 'needs_card', 'walk_in', 'unavailable', 'requested'];
-const FOOD_ICON: Record<string, string> = { restaurant: '🍽', cafe: '☕', bar: '🍸' };
+const FOOD_ICON: Record<string, boolean> = { restaurant: true, cafe: true, bar: true };
 
 const fmtSlot = (s: string) => {
   const d = parseISO(s.replace(' ', 'T'));
@@ -247,9 +251,9 @@ function Reservations({
                 return (
                   <div key={i.id} className="p-3">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm flex-shrink-0">{FOOD_ICON[i.category]}</span>
+                      {React.createElement(CATEGORY_META[i.category].icon, { size: 13, className: 'text-zinc-400 flex-shrink-0' })}
                       <span className="text-xs font-bold text-zinc-800 flex-1 min-w-0 truncate">{i.title}</span>
-                      <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full border flex-shrink-0', meta.chip)}>
+                      <span className={cn('text-[10px] font-medium px-1.5 py-0.5 rounded flex-shrink-0', meta.chip)}>
                         {t(meta.label)}
                       </span>
                     </div>
@@ -276,7 +280,7 @@ function Reservations({
                         const day = dates.indexOf(placed.date) + 1;
                         return (
                           <button onClick={() => onJumpToDay(placed.date)} className="pl-6 mt-2 text-[10px] font-bold text-zinc-500 hover:text-zinc-900">
-                            {day > 0 ? t('✓ 已在 Day {n} 行程 →', { n: day }) : t('✓ 已加入行程')}
+                            <span className="flex items-center gap-1"><Check size={11} />{day > 0 ? t('已在 Day {n} 行程 →', { n: day }) : t('已加入行程')}</span>
                           </button>
                         );
                       }
@@ -303,10 +307,10 @@ function Reservations({
                     {r.status !== 'booked' && (
                       <div className="pl-6 mt-2 flex gap-3">
                         <button onClick={() => mark(i, 'booked')} className="text-[10px] font-bold text-emerald-600 hover:underline">
-                          {t('✓ 標記已訂')}
+                          <span className="flex items-center gap-1"><Check size={11} />{t('標記已訂')}</span>
                         </button>
                         <button onClick={() => mark(i, 'unavailable')} className="text-[10px] font-bold text-zinc-400 hover:text-red-500 hover:underline">
-                          {t('✕ 訂不到')}
+                          <span className="flex items-center gap-1"><XIcon size={11} />{t('訂不到')}</span>
                         </button>
                       </div>
                     )}
@@ -664,8 +668,8 @@ export function TripOverview({
                       </span>
                     )}
                     {hasFlight && <Plane size={10} className="text-blue-400" />}
-                    {checkIn && <span className="text-[9px]" title={t('入住 {name}', { name: checkIn.name })}>🔑</span>}
-                    {checkOut && <span className="text-[9px]" title={t('退房 {name}', { name: checkOut.name })}>🧳</span>}
+                    {checkIn && <span title={t('入住 {name}', { name: checkIn.name })}><KeyRound size={10} className="text-zinc-400" /></span>}
+                    {checkOut && <span title={t('退房 {name}', { name: checkOut.name })}><Luggage size={10} className="text-zinc-400" /></span>}
                   </div>
                   <p
                     className={cn(
@@ -710,7 +714,7 @@ export function TripOverview({
                 >
                   <Plane size={14} className="text-blue-400 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-zinc-800 truncate">{f.activity.replace('航班:', t('航班:'))}</div>
+                    <div className="text-xs font-bold text-zinc-800 truncate">{f.activity.replace(/^✈️\s*/, '').replace('航班:', t('航班:')).replace(' 🛫 ', ' → ')}</div>
                     <div className="text-[10px] text-zinc-400 tabular-nums mt-0.5">
                       {format(parseISO(f.date), 'M/d')} · {f.start_time} → {f.end_time}
                     </div>
@@ -750,7 +754,7 @@ export function TripOverview({
                                 out ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-violet-50 text-violet-600 border-violet-100',
                               )}
                             >
-                              {out ? t('去') : t('回')} {flightNoOf(f.activity) ?? '✈'} · {format(parseISO(f.date), 'M/d')} {f.start_time}
+                              {out ? t('去') : t('回')} {flightNoOf(f.activity) ?? t('航班')} · {format(parseISO(f.date), 'M/d')} {f.start_time}
                             </button>
                           );
                         })}

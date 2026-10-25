@@ -12,6 +12,15 @@ import {
   Lightbulb,
   ImagePlus,
   X,
+  Utensils,
+  Coffee,
+  Wine,
+  Landmark,
+  ShoppingBag,
+  BedDouble,
+  Sparkles as SparklesIcon,
+  Timer,
+  type LucideIcon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -23,14 +32,15 @@ import { Trip, Activity, Idea, IdeaPhoto, User } from '../types';
 import { t, useLang, getLang } from '../i18n';
 import { useCollapsed } from './Section';
 
-const CATEGORY_META: Record<Idea['category'], { icon: string; label: string; chip: string }> = {
-  restaurant: { icon: '🍽', label: '餐廳', chip: 'text-rose-600 bg-rose-50 border-rose-100' },
-  cafe: { icon: '☕', label: '咖啡廳', chip: 'text-amber-700 bg-amber-50 border-amber-200' },
-  bar: { icon: '🍸', label: '酒吧', chip: 'text-fuchsia-700 bg-fuchsia-50 border-fuchsia-100' },
-  landmark: { icon: '🏛', label: '景點', chip: 'text-blue-600 bg-blue-50 border-blue-100' },
-  shopping: { icon: '🛍', label: '購物', chip: 'text-purple-600 bg-purple-50 border-purple-100' },
-  stay: { icon: '🏨', label: '住宿', chip: 'text-teal-700 bg-teal-50 border-teal-100' },
-  other: { icon: '✨', label: '其他', chip: 'text-stone-600 bg-stone-100 border-stone-200' },
+/** Notion-style: a gray line icon where a category leads a row, a soft text-only tag elsewhere. */
+export const CATEGORY_META: Record<Idea['category'], { icon: LucideIcon; label: string; chip: string }> = {
+  restaurant: { icon: Utensils, label: '餐廳', chip: 'bg-orange-100/80 text-orange-800' },
+  cafe: { icon: Coffee, label: '咖啡廳', chip: 'bg-amber-100/80 text-amber-800' },
+  bar: { icon: Wine, label: '酒吧', chip: 'bg-pink-100/80 text-pink-800' },
+  landmark: { icon: Landmark, label: '景點', chip: 'bg-sky-100/80 text-sky-800' },
+  shopping: { icon: ShoppingBag, label: '購物', chip: 'bg-purple-100/80 text-purple-800' },
+  stay: { icon: BedDouble, label: '住宿', chip: 'bg-emerald-100/80 text-emerald-800' },
+  other: { icon: SparklesIcon, label: '其他', chip: 'bg-zinc-100 text-zinc-600' },
 };
 
 /**
@@ -464,11 +474,11 @@ export function IdeaStash({
                 key={k}
                 onClick={() => setFilter(filter === k ? null : k)}
                 className={cn(
-                  'text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors',
-                  filter === k ? CATEGORY_META[k].chip : filter ? 'bg-white text-zinc-300 border-zinc-100' : CATEGORY_META[k].chip,
+                  'text-[10px] font-medium px-1.5 py-0.5 rounded transition-colors',
+                  filter === k ? CATEGORY_META[k].chip : filter ? 'bg-zinc-50 text-zinc-300' : CATEGORY_META[k].chip,
                 )}
               >
-                {CATEGORY_META[k].icon} {t(CATEGORY_META[k].label)} {n}
+                {t(CATEGORY_META[k].label)} <span className="opacity-60">{n}</span>
               </button>
             ))}
             {filter && (
@@ -562,14 +572,14 @@ export function IdeaStash({
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-xs font-bold text-zinc-900">{c.title}</span>
-                              <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full border', meta.chip)}>
-                                {meta.icon} {t(meta.label)}
+                              <span className={cn('text-[9px] font-medium px-1.5 py-0.5 rounded', meta.chip)}>
+                                {t(meta.label)}
                               </span>
                             </div>
                             {c.note && <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed">{c.note}</p>}
                             <div className="flex items-center gap-2 mt-1 text-[9px] text-zinc-400">
                               {c.area && <span className="flex items-center gap-0.5"><MapPin size={8} />{c.area}</span>}
-                              {c.duration && <span>⏱ {c.duration}</span>}
+                              {c.duration && <span className="flex items-center gap-0.5"><Timer size={8} />{c.duration}</span>}
                             </div>
                           </div>
                         </button>
@@ -631,11 +641,11 @@ export function IdeaStash({
                     type="button"
                     onClick={() => setManualCategory(k)}
                     className={cn(
-                      'text-[10px] font-bold px-2.5 py-1 rounded-full border transition-colors',
-                      manualCategory === k ? CATEGORY_META[k].chip : 'bg-white text-zinc-400 border-zinc-200',
+                      'text-[10px] font-medium px-2 py-1 rounded transition-colors',
+                      manualCategory === k ? CATEGORY_META[k].chip : 'bg-zinc-50 text-zinc-400',
                     )}
                   >
-                    {CATEGORY_META[k].icon} {t(CATEGORY_META[k].label)}
+                    {t(CATEGORY_META[k].label)}
                   </button>
                 ))}
               </div>
@@ -687,17 +697,17 @@ export function IdeaStash({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-sm font-bold text-zinc-900 leading-snug">{idea.title}</span>
-                      <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full border', meta.chip)}>
-                        {meta.icon} {t(meta.label)}
+                      <span className={cn('text-[9px] font-medium px-1.5 py-0.5 rounded', meta.chip)}>
+                        {t(meta.label)}
                       </span>
                       {idea.reservation?.status === 'walk_in' && (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-violet-50 text-violet-600 border-violet-100">
-                          🚶 {t('現場排隊')}
+                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-violet-100/80 text-violet-800">
+                          {t('現場排隊')}
                         </span>
                       )}
                       {idea.reservation?.status === 'unavailable' && (
-                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border bg-red-50 text-red-500 border-red-100">
-                          🚫 {t('旅程期間訂不到')}
+                        <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-red-100/80 text-red-800">
+                          {t('旅程期間訂不到')}
                         </span>
                       )}
                     </div>
@@ -709,7 +719,7 @@ export function IdeaStash({
                     )}
                     <div className="flex items-center gap-2.5 mt-1.5 text-[9px] text-zinc-400 flex-wrap">
                       {idea.area && <span className="flex items-center gap-0.5"><MapPin size={8} />{idea.area}</span>}
-                      {idea.duration && <span>⏱ {idea.duration}</span>}
+                      {idea.duration && <span className="flex items-center gap-0.5"><Timer size={8} />{idea.duration}</span>}
                       <span>{t('由 {name} 加入', { name: idea.created_by })}</span>
                     </div>
                     {(photosFor(idea.id).length > 0 || uploadingId === idea.id) && (

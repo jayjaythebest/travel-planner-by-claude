@@ -236,6 +236,59 @@ headline 與每條 tips 都用 ${outLang()}，tips 每條 25 字以內（英文�
     return '';
   },
 
+  /**
+   * Getting between an airport and the lodging: taxi/rideshare and public
+   * transport, with time, cost in local currency, and one practical tip.
+   */
+  async getAirportTransfer(p: {
+    direction: 'arrive' | 'depart';
+    airport: string;
+    address: string;
+    country: string;
+    time: string;
+  }) {
+    const route = p.direction === 'arrive' ? `從機場 ${p.airport} 到住宿「${p.address}」` : `從住宿「${p.address}」到機場 ${p.airport}`;
+    const when = p.direction === 'arrive' ? `航班 ${p.time} 抵達` : `航班 ${p.time} 起飛`;
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `旅遊國家：${p.country}。${route}，${when}。
+請估算兩種方式的交通時間與費用（費用用當地貨幣，給範圍）：
+1. 計程車或 Uber／叫車
+2. 大眾運輸（地鐵、機場巴士、Metrobús 之類）。如果那個時段已經沒有班次、或帶行李搭非常不實際，transit 給 null。
+另外給一句最實用的提醒（例如機場官方計程車櫃台、要避開的排班車、尖峰時段塞車）。
+文字用${outLang()}，地名保留原文。`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            taxi: {
+              type: Type.OBJECT,
+              properties: {
+                minutes: { type: Type.NUMBER, description: "一般路況的分鐘數" },
+                cost: { type: Type.STRING, description: "例如 MXN 250–350" },
+              },
+              required: ["minutes", "cost"],
+            },
+            transit: {
+              type: Type.OBJECT,
+              nullable: true,
+              properties: {
+                minutes: { type: Type.NUMBER },
+                cost: { type: Type.STRING },
+                route: { type: Type.STRING, description: "一句話路線，例如 Metrobús 4 號線到 Buenavista 轉…" },
+              },
+              required: ["minutes", "cost", "route"],
+            },
+            tip: { type: Type.STRING },
+          },
+          required: ["taxi", "tip"],
+        },
+      },
+    });
+    return JSON.parse(response.text || "{}");
+  },
+
   async getActivityPhoto(activityName: string, country: string): Promise<string> {
     const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 

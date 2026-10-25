@@ -133,6 +133,21 @@ export interface Activity {
   passengers?: string[];
   /** The stash idea this activity was placed from, when it came from a booking. */
   idea_id?: string;
+  /**
+   * Flights only: Gemini's airport <-> lodging estimate, cached the first time
+   * the day is viewed. Keyed by direction; `acc_id` is the lodging it was
+   * worked out for, so changing hotels recomputes it.
+   */
+  transfer_estimates?: Partial<Record<'arrive' | 'depart', { acc_id: string; data: TransferEstimate }>>;
+  /** Set on an activity created from a transfer card: "<flight id>:arrive|depart". */
+  transfer_of?: string;
+}
+
+export interface TransferEstimate {
+  taxi: { minutes: number; cost: string };
+  /** Null when public transport is not a realistic option at that hour. */
+  transit: { minutes: number; cost: string; route: string } | null;
+  tip: string;
 }
 
 export interface Accommodation {

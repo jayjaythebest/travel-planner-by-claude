@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { CalendarCheck, Loader2, Plane } from 'lucide-react';
+import { CalendarCheck, Loader2, Plane, Check, Minus } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { Modal } from './Modal';
 import { cn } from '../utils';
@@ -77,7 +77,7 @@ export function CalendarSyncModal({
         state === 'off' ? 'border-zinc-300 bg-white' : 'bg-zinc-900 border-zinc-900 text-white',
       )}
     >
-      {state === 'on' ? '✓' : state === 'some' ? '–' : ''}
+      {state === 'on' ? <Check size={11} strokeWidth={3} /> : state === 'some' ? <Minus size={11} strokeWidth={3} /> : null}
     </span>
   );
   const stateOf = (ids: string[]) => {
@@ -146,7 +146,7 @@ export function CalendarSyncModal({
                         <span className="text-[11px] font-bold text-zinc-400 tabular-nums w-10 flex-shrink-0">{a.start_time || '—'}</span>
                         {a.is_flight && <Plane size={11} className="text-blue-400 flex-shrink-0" />}
                         <span className={cn('text-xs flex-1 min-w-0 truncate', on ? 'text-zinc-800' : 'text-zinc-400')}>
-                          {a.is_flight ? a.activity.replace('航班:', t('航班:')) : a.activity}
+                          {a.is_flight ? a.activity.replace(/^✈️\s*/, '').replace('航班:', t('航班:')).replace(' 🛫 ', ' → ') : a.activity}
                         </span>
                         {synced[a.id] && (
                           <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded-full flex-shrink-0">
