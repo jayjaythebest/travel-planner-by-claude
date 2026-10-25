@@ -178,7 +178,32 @@ WALK_IN      不收訂位。
 
 
 # ── Reply parsing ────────────────────────────────────────────────────────────
-def parse_reply(text: str, refs: dict, ideas: dict[str, dict]) -> list[dict]:
+def in_trip_year(slot: str, trip: dict) -> str:
+    """
+    Move a "YYYY-MM-DD HH:MM" slot to the year that puts it in (or nearest) the trip.
+
+    Muse writes "11/25 19:00" with no year, and Gemini filled one in from its
+    own sense of "now" — 2023 — which put three bookings on days that are not
+    in the trip at all. Trying the trip's year and its neighbours also covers a
+    trip across New Year, where December and January belong to different years.
+    """
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})(.*)$", slot.strip())
+    if not m:
+        return slot
+    start, end = date.fromisoformat(trip["start_date"]), date.fromisoformat(trip["end_date"])
+    month, day, rest = int(m.group(2)), int(m.group(3)), m.group(4)
+
+    def distance(c: date) -> int:
+        return 0 if start <= c <= end else min(abs((c - start).days), abs((c - end).days))
+
+    try:
+        best = min((date(y, month, day) for y in (start.year - 1, start.year, start.year + 1)), key=distance)
+    except ValueError:  # Feb 29 in a year without one
+        return slot
+    return best.isoformat() + rest
+
+
+def parse_reply(text: str, refs: dict, ideas: dict[str, dict], trip: dict) -> list[dict]:
     listing = "\n".join(f"#{n} {ideas[i]['title']}" for n, i in refs.items() if i in ideas)
     client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
     prompt = f"""以下是訂位助理 Muse 回覆的訂位結果。請把每家店的結果整理出來。
@@ -189,7 +214,7 @@ def parse_reply(text: str, refs: dict, ideas: dict[str, dict]) -> list[dict]:
 規則：
 - ref 填上面的編號數字；回覆只寫店名沒寫編號時，依名稱對到最接近的那一個。對不到就不要列。
 - status 只能是 booked / available / needs_card / unavailable / walk_in。
-- slots 是可訂或已訂的時段，每個寫成 "YYYY-MM-DD HH:MM"（年份用旅程的年份），沒有就空陣列。
+- slots 是可訂或已訂的時段，每個寫成 "YYYY-MM-DD HH:MM"，沒有就空陣列。旅程是 {trip["start_date"]} 到 {trip["end_date"]}；回覆裡只寫月/日時，年份一律用落在這段期間的那一年。
 - confirmation 是確認碼，沒有就空字串。
 - note 用一句話保留其他重要資訊（訂金、人數限制、要電話訂之類），沒有就空字串。同一句話要給兩個版本：note 用繁體中文，note_en 用英文；店名、金額、email、電話照原文。
 
@@ -230,7 +255,8 @@ Muse 的回覆：
         idea_id = refs.get(str(int(r.get("ref", 0))))
         status = str(r.get("status", "")).lower()
         if idea_id and status in STATUSES:
-            out.append({"idea_id": idea_id, "status": status, "slots": r.get("slots") or [],
+            out.append({"idea_id": idea_id, "status": status,
+                        "slots": [in_trip_year(str(x), trip) for x in (r.get("slots") or [])],
                         "confirmation": r.get("confirmation") or "", "note": r.get("note") or "",
                         "note_en": r.get("note_en") or ""})
     return out
@@ -264,7 +290,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
         text = strip_quoted(plain_text(msg["payload"]))
         if not text:
             continue
-        results = parse_reply(text, state.get("refs") or {}, food)
+        results = parse_reply(text, state.get("refs") or {}, food, trip)
         print(f"  reply {mid}: {len(results)} results")
         for r in results:
             # Marked by hand in the app (booked it themselves, or gave up):

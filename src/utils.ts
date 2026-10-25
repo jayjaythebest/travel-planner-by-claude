@@ -413,6 +413,28 @@ export function isOutboundDate(date: string, start: string, end: string): boolea
   return Date.parse(date) <= s + (Date.parse(end) - s) / 2;
 }
 
+/**
+ * A YYYY-MM-DD moved to the year that puts it in (or nearest) the trip.
+ *
+ * Booking replies say "11/25 19:00" with no year, and a model filling one in
+ * once chose 2023 — three bookings landed on days outside the trip and never
+ * showed under any Day tab. The reservation-agent applies the same rule; this
+ * is the guard for anything that slipped through before it did.
+ */
+export function inTripYear(ymd: string, start: string, end: string): string {
+  const m = ymd.match(/^\d{4}-(\d{2})-(\d{2})$/);
+  if (!m) return ymd;
+  const s = Date.parse(start), e = Date.parse(end), y = Number(start.slice(0, 4));
+  const distance = (d: string) => {
+    const t = Date.parse(d);
+    return t >= s && t <= e ? 0 : Math.min(Math.abs(t - s), Math.abs(t - e));
+  };
+  return [y - 1, y, y + 1]
+    .map(year => `${year}-${m[1]}-${m[2]}`)
+    .filter(d => !isNaN(Date.parse(d)))
+    .sort((a, b) => distance(a) - distance(b))[0] ?? ymd;
+}
+
 /** Convert through EXCHANGE_RATES, which are TWD per unit. */
 export function convertAmount(amount: number, from: string, to: string): number {
   return (amount * (EXCHANGE_RATES[from] || 1)) / (EXCHANGE_RATES[to] || 1);

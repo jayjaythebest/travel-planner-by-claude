@@ -27,7 +27,7 @@ import {
   LayoutGrid
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -1117,7 +1117,8 @@ export default function App() {
     const r = idea.reservation;
     const m = r?.slots?.[0]?.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/);
     if (!r || !m) return;
-    const [, date, hh, mm] = m;
+    const [, rawDate, hh, mm] = m;
+    const date = inTripYear(rawDate, selectedTrip.start_date, selectedTrip.end_date);
     const sitting = idea.category === 'bar' ? 120 : idea.category === 'cafe' ? 60 : 90;
     const endMins = (Number(hh) * 60 + Number(mm) + sitting) % (24 * 60);
     const end = `${String(Math.floor(endMins / 60)).padStart(2, '0')}:${String(endMins % 60).padStart(2, '0')}`;
