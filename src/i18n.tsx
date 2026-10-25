@@ -344,6 +344,7 @@ const EN: Record<string, string> = {
   '已經兩清': 'All settled',
   '只計入有勾選平分對象的支出。+ 代表別人欠他，− 代表他要付。': 'Only split expenses count. + means they are owed, − means they owe.',
   '顯示全部': 'Show all',
+  '與航班時間衝突': 'Clashes with your flights',
   '機場 → 住宿': 'Airport → lodging',
   '住宿 → 機場': 'Lodging → airport',
   '計程車／Uber 約 {m} 分鐘 · {cost}': 'Taxi / Uber ~{m} min · {cost}',

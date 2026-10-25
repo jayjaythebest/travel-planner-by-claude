@@ -39,7 +39,7 @@ import {
   Check
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
+import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, freeWindows, fitsWindow, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User, TransferEstimate } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -1141,7 +1141,8 @@ export default function App() {
     if (!day) return;
     const tripRef = selectedTrip;
 
-    for (const s of day.stops.filter(s => stopIds.includes(s.id) && !s.imported)) {
+    const windows = freeWindows(tripRef, activities);
+    for (const s of day.stops.filter(s => stopIds.includes(s.id) && !s.imported && fitsWindow(windows, date, s.start_time, s.end_time))) {
       const idea = s.idea_title ? ideas.find(i => i.title === s.idea_title) : undefined;
       const docRef = await addDoc(collection(db, 'activities'), {
         id: crypto.randomUUID(),

@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
-import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate, flagUrl } from '../utils';
+import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate, flagUrl, freeWindows, fitsWindow } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation } from '../types';
 import { IdeaStash, isInReservations, CATEGORY_META } from './IdeaStash';
 import { Section, useCollapsed } from './Section';
@@ -70,12 +70,16 @@ function StatTile({
  * A suggested plan for one day, under its row in 每日一覽. Disappears once every
  * stop has been imported; the imported ones are already in the row above.
  */
-function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (stopIds: string[]) => Promise<void> }) {
+function SuggestedDayCard({ day, fits, onImport }: { day: SuggestedDay; fits: (start: string, end: string) => boolean; onImport: (stopIds: string[]) => Promise<void> }) {
   // One import at a time per day: a second tap mid-import would add the same
   // stops again, because the imported flags are only written at the end.
   const [busy, setBusy] = useState<string | null>(null);
   const pending = day.stops.filter(s => !s.imported);
-  if (pending.length === 0) return null;
+  // Stops the flights make impossible stay visible but cannot be imported —
+  // a plan written before the flights were known is the case this catches.
+  const importable = pending.filter(s => fits(s.start_time, s.end_time));
+  // A day with nothing to do (an arrival late at night) still shows why.
+  if (pending.length === 0 && !(day.stops.length === 0 && day.summary)) return null;
   const importedCount = day.stops.length - pending.length;
 
   const run = async (key: string, ids: string[]) => {
@@ -99,30 +103,36 @@ function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (sto
           </span>
           <span className="text-[11px] font-bold text-violet-900/80 truncate">{(getLang() === 'zh' && day.title_zh) || day.title}</span>
         </div>
+        {importable.length > 0 && (
         <button
-          onClick={() => run('all', pending.map(s => s.id))}
+          onClick={() => run('all', importable.map(s => s.id))}
           disabled={busy !== null}
           className="flex items-center gap-1 text-[10px] font-bold text-white bg-violet-600 px-2 py-1 rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50 flex-shrink-0"
         >
           {busy === 'all' ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />}
           {t('全部加入行程')}
         </button>
+        )}
       </div>
       {day.summary && (
         <p className="text-[10px] text-violet-900/60 leading-relaxed mb-2 italic">{(getLang() === 'zh' && day.summary_zh) || day.summary}</p>
       )}
       <ul className="space-y-1">
-        {pending.map(s => (
-          <li key={s.id} className="flex items-start gap-2">
+        {pending.map(s => {
+          const ok = fits(s.start_time, s.end_time);
+          return (
+          <li key={s.id} className={cn('flex items-start gap-2', !ok && 'opacity-50')}>
             <span className="text-[10px] font-bold text-violet-500 tabular-nums w-9 flex-shrink-0 pt-0.5">{s.start_time}</span>
             <div className="flex-1 min-w-0">
               <div className="text-[11px] font-bold text-zinc-700 leading-snug">{s.activity}</div>
+              {!ok && <div className="text-[10px] font-bold text-red-500">{t('與航班時間衝突')}</div>}
               {(s.area || s.note) && (
                 <div className="text-[10px] text-zinc-400 leading-snug">
                   {[s.area, (getLang() === 'zh' && s.note_zh) || s.note].filter(Boolean).join(' · ')}
                 </div>
               )}
             </div>
+            {ok && (
             <button
               onClick={() => run(s.id, [s.id])}
               disabled={busy !== null}
@@ -131,8 +141,10 @@ function SuggestedDayCard({ day, onImport }: { day: SuggestedDay; onImport: (sto
             >
               {busy === s.id ? <Loader2 size={11} className="animate-spin" /> : <Plus size={11} />}
             </button>
+            )}
           </li>
-        ))}
+          );
+        })}
       </ul>
       {importedCount > 0 && (
         <p className="text-[9px] text-violet-500/70 mt-1.5">{t('已加入 {n} 筆', { n: importedCount })}</p>
@@ -384,6 +396,7 @@ export function TripOverview({
         ? { label: t('旅程進行中'), tone: 'bg-emerald-50 text-emerald-600 border-emerald-100' }
         : { label: t('已完成'), tone: 'bg-zinc-100 text-zinc-400 border-zinc-200' };
 
+  const windows = freeWindows(trip, activities);
   const suggestedByDate = Object.fromEntries(
     (trip.suggested_plan?.days ?? []).map(d => [d.date, d] as const),
   ) as Record<string, SuggestedDay | undefined>;
@@ -691,7 +704,11 @@ export function TripOverview({
                 </div>
               </button>
               {suggestedByDate[date] && (
-                <SuggestedDayCard day={suggestedByDate[date]} onImport={ids => onImportSuggestion(date, ids)} />
+                <SuggestedDayCard
+                  day={suggestedByDate[date]}
+                  fits={(start, end) => fitsWindow(windows, date, start, end)}
+                  onImport={ids => onImportSuggestion(date, ids)}
+                />
               )}
               </div>
             );

@@ -29,7 +29,7 @@ import base64
 import json
 import os
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -122,18 +122,96 @@ def party_size(trip: dict) -> int:
     return max(len(ids), 1)
 
 
+def _mins(hhmm: str) -> int | None:
+    m = re.match(r"^(\d{1,2}):(\d{2})", hhmm or "")
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+
+def _hhmm(mins: int) -> str:
+    return f"{mins // 60:02d}:{mins % 60:02d}"
+
+
+def free_windows(trip: dict, activities: list[dict]) -> dict[str, tuple[int, int] | None]:
+    """
+    When the travellers are actually in town, per trip day, in minutes.
+
+    Derived from the flights: on a day in the first half of the trip the last
+    flight is the arrival, and nothing can start until 90 minutes after it
+    lands (immigration, bags, the ride in); in the second half the first
+    flight is the departure, and everything must be over 3 hours before it
+    leaves. Without this a slot like Pujol 11/28 14:00 came back as bookable
+    on a day whose flight out was at 12:25. None means the whole day is gone.
+    """
+    start, end = date.fromisoformat(trip["start_date"]), date.fromisoformat(trip["end_date"])
+    mid = start + (end - start) / 2
+    out: dict[str, tuple[int, int] | None] = {}
+    d = start
+    while d <= end:
+        ds = d.isoformat()
+        flights = sorted((a for a in activities if a.get("is_flight") and a.get("date") == ds),
+                         key=lambda a: a.get("start_time", ""))
+        window: tuple[int, int] | None = (0, 24 * 60)
+        if flights:
+            if d <= mid:
+                landed = _mins(flights[-1].get("end_time", ""))
+                if landed is not None:
+                    window = (landed + 90, 24 * 60) if landed + 90 < 24 * 60 else None
+            else:
+                leaves = _mins(flights[0].get("start_time", ""))
+                if leaves is not None:
+                    window = (0, leaves - 180) if leaves - 180 > 0 else None
+        out[ds] = window
+        d += timedelta(days=1)
+    return out
+
+
+def windows_text(windows: dict[str, tuple[int, int] | None]) -> str:
+    lines = []
+    for ds, w in windows.items():
+        day = ds[5:].replace("-", "/")
+        if w is None:
+            lines.append(f"- {day}：不行（航班當天，整天都不在城裡）")
+        elif w == (0, 24 * 60):
+            lines.append(f"- {day}：全天")
+        elif w[0] == 0:
+            lines.append(f"- {day}：{_hhmm(w[1])} 前要結束（之後要去機場）")
+        else:
+            lines.append(f"- {day}：{_hhmm(w[0])} 之後（剛下飛機）")
+    return "\n".join(lines)
+
+
+def slot_fits(slot: str, windows: dict[str, tuple[int, int] | None], sitting: int = 90) -> bool:
+    """A 'YYYY-MM-DD HH:MM' slot that starts and finishes inside that day's window."""
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})", slot.strip())
+    if not m:
+        return True  # unparseable: leave it for a person to read
+    w = windows.get(m.group(1), (0, 24 * 60))
+    t = _mins(m.group(2))
+    return w is not None and t is not None and w[0] <= t and t + sitting <= w[1]
+
+
+def windows_sig(windows: dict) -> str:
+    return json.dumps(windows, sort_keys=True)
+
+
 def desired_time(idea: dict, activities: list[dict], trip: dict) -> str:
-    """Planned slot if the idea is on the plan, else a flexible window."""
+    """
+    Planned slot if the idea is on the plan and the travellers can make it,
+    else a flexible window. A suggested-plan time can predate the flights —
+    Day 1 assumed an afternoon arrival before the 22:30 landing was known.
+    """
     title = idea.get("title", "")
+    windows = free_windows(trip, activities)
+    sitting = 120 if idea.get("category") == "bar" else 60 if idea.get("category") == "cafe" else 90
+    fits = lambda ds, hm: slot_fits(f"{ds} {hm}", windows, sitting)
     for a in activities:
-        if a.get("activity") == title and not a.get("is_flight"):
+        if a.get("activity") == title and not a.get("is_flight") and fits(a["date"], a.get("start_time", "")):
             return f"{a['date'][5:].replace('-', '/')} {a.get('start_time', '')}（已排進行程）"
     for d in (trip.get("suggested_plan") or {}).get("days", []):
         for s in d.get("stops", []):
-            if s.get("idea_title") == title:
+            if s.get("idea_title") == title and fits(d["date"], s.get("start_time", "")):
                 return f"{d['date'][5:].replace('-', '/')} {s.get('start_time', '')}（建議行程）"
-    start, end = trip["start_date"][5:].replace("-", "/"), trip["end_date"][5:].replace("-", "/")
-    return f"彈性：{start}–{end} 任一天 {FLEX_WINDOW.get(idea.get('category'), FLEX_WINDOW['restaurant'])}"
+    return f"彈性：下面「可以的時間」內任一天 {FLEX_WINDOW.get(idea.get('category'), FLEX_WINDOW['restaurant'])}"
 
 
 def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activities: list[dict]) -> tuple[str, str, dict]:
@@ -149,6 +227,9 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
 
 這是 Travel Planner 自動寄出的訂位請求。
 旅程：{trip['name']}（{trip['country']}），{trip['start_date']} ~ {trip['end_date']}，{party_size(trip)} 人。
+
+可以的時間（依航班算好的，只能訂在這些時間內，時間外的位子不要訂、也不要回報）：
+{windows_text(free_windows(trip, activities))}
 
 規則：
 - 不需要綁信用卡、也不需要預付的：請直接用 Jay Huang 的名義訂下最符合的時段。
@@ -308,15 +389,50 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
             food[r["idea_id"]]["reservation"] = res
         state["last_reply_at"] = now_iso()
 
-    # 2. New request when something has never been sent.
+    # 2. Drop reported times the travellers cannot make, given their flights.
+    acts = [a.to_dict() for a in db.collection("activities").where("trip_id", "==", child_id).stream()]
+    windows = free_windows(trip, acts)
     manual = {i for i, d in food.items() if (d.get("reservation") or {}).get("manual")}
+    for i, d in food.items():
+        r = d.get("reservation") or {}
+        if i in manual or r.get("status") not in ("available", "needs_card") or not r.get("slots"):
+            continue
+        sitting = 120 if d.get("category") == "bar" else 60 if d.get("category") == "cafe" else 90
+        keep = [x for x in r["slots"] if slot_fits(x, windows, sitting)]
+        if keep == r["slots"]:
+            continue
+        res = {**r, "slots": keep}
+        if not keep:
+            # Nothing reported is reachable: ask again within the right times
+            # rather than call it unavailable on the strength of bad windows.
+            res.update(status="requested",
+                       note="先前回報的時段都跟航班時間衝突，已請 Muse 在可行時段重新查詢。",
+                       note_en="All reported times clashed with the flights; Muse has been asked again for times that work.")
+        print(f"  {d['title']}: dropped {len(r['slots']) - len(keep)} slot(s) outside the travel windows")
+        if not dry:
+            db.collection("ideas").document(i).update({"reservation": res})
+        d["reservation"] = res
+
+    # 3. New request when something has never been sent, or the windows moved
+    # (a flight was added or changed) since the last request.
     never_sent = [i for i, d in food.items() if i not in manual and not (d.get("reservation") or {}).get("requested_at")]
-    if never_sent:
+    sig = windows_sig(windows)
+    if state.get("windows_sig") is None and state.get("last_request_at"):
+        # First run since windows existed: the earlier request told Muse
+        # nothing about flights, which only matters if any day is restricted.
+        restricted = any(w != (0, 24 * 60) for w in windows.values())
+        moved = restricted
+        if not restricted:
+            state["windows_sig"] = sig
+    else:
+        moved = bool(state.get("last_request_at")) and state.get("windows_sig") != sig
+    if never_sent or moved:
         open_ideas = sorted(
-            ((i, d) for i, d in food.items() if i not in manual and (d.get("reservation") or {}).get("status") != "booked"),
+            # Booked is done and walk-in cannot be booked: neither is worth asking about again.
+            ((i, d) for i, d in food.items()
+             if i not in manual and (d.get("reservation") or {}).get("status") not in ("booked", "walk_in")),
             key=lambda x: x[1].get("created_at", ""),
         )
-        acts = [a.to_dict() for a in db.collection("activities").where("trip_id", "==", child_id).stream()]
         subject, body, refs = build_request(trip, trip_id, open_ideas, acts)
         print(f"  sending request: {len(open_ideas)} places ({len(never_sent)} new)")
         if dry:
@@ -340,7 +456,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
                                                 metadataHeaders=["Message-ID"]).execute()
             processed.add(sent["id"])
             state.update(thread_id=sent["threadId"], last_message_id=header(full, "Message-ID"),
-                         last_request_at=now_iso(), refs=refs)
+                         last_request_at=now_iso(), refs=refs, windows_sig=windows_sig(windows))
             stamp = now_iso()
             for i, d in open_ideas:
                 prev = d.get("reservation") or {}

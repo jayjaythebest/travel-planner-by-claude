@@ -435,6 +435,56 @@ export function inTripYear(ymd: string, start: string, end: string): string {
     .sort((a, b) => distance(a) - distance(b))[0] ?? ymd;
 }
 
+/**
+ * When the travellers are actually in town on each trip day, in minutes —
+ * the same rule reservation-agent/main.py's free_windows applies.
+ *
+ * On a day in the first half of the trip the last flight is the arrival and
+ * nothing can start until 90 minutes after it lands; in the second half the
+ * first flight is the departure and everything must end 3 hours before it.
+ * null means the day is gone. Suggested plans and booked slots were both
+ * once proposed for hours the travellers would still be in the air.
+ */
+export function freeWindows(
+  trip: { start_date: string; end_date: string },
+  activities: { date: string; start_time: string; end_time: string; is_flight: boolean }[],
+): Record<string, [number, number] | null> {
+  const mins = (t: string) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(t || '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  };
+  const out: Record<string, [number, number] | null> = {};
+  const start = Date.parse(trip.start_date), end = Date.parse(trip.end_date);
+  for (let t = start; t <= end; t += 86_400_000) {
+    const ds = new Date(t).toISOString().slice(0, 10);
+    const flights = activities.filter(a => a.is_flight && a.date === ds).sort((a, b) => a.start_time.localeCompare(b.start_time));
+    let w: [number, number] | null = [0, 24 * 60];
+    if (flights.length > 0) {
+      if (isOutboundDate(ds, trip.start_date, trip.end_date)) {
+        const landed = mins(flights[flights.length - 1].end_time);
+        if (landed !== null) w = landed + 90 < 24 * 60 ? [landed + 90, 24 * 60] : null;
+      } else {
+        const leaves = mins(flights[0].start_time);
+        if (leaves !== null) w = leaves - 180 > 0 ? [0, leaves - 180] : null;
+      }
+    }
+    out[ds] = w;
+  }
+  return out;
+}
+
+/** Whether something from `start` to `end` (HH:MM) on `date` fits that day's window. */
+export function fitsWindow(windows: Record<string, [number, number] | null>, date: string, start: string, end?: string): boolean {
+  if (!(date in windows)) return true;
+  const w = windows[date];
+  const s = /^(\d{1,2}):(\d{2})/.exec(start || '');
+  if (!w || !s) return Boolean(w);
+  const st = Number(s[1]) * 60 + Number(s[2]);
+  const e = /^(\d{1,2}):(\d{2})/.exec(end || '');
+  const en = e && Number(e[1]) * 60 + Number(e[2]) > st ? Number(e[1]) * 60 + Number(e[2]) : st + 60;
+  return st >= w[0] && en <= w[1];
+}
+
 /** Convert through EXCHANGE_RATES, which are TWD per unit. */
 export function convertAmount(amount: number, from: string, to: string): number {
   return (amount * (EXCHANGE_RATES[from] || 1)) / (EXCHANGE_RATES[to] || 1);
