@@ -345,6 +345,7 @@ const EN: Record<string, string> = {
   '只計入有勾選平分對象的支出。+ 代表別人欠他，− 代表他要付。': 'Only split expenses count. + means they are owed, − means they owe.',
   '顯示全部': 'Show all',
   '訂位與門票': 'Reservations & tickets',
+  '訂位人數': 'Party size for bookings',
   '需要預約': 'Ticket needed',
   '要先買票？': 'Needs a ticket?',
   '標記後會一起請 Muse 查詢可預約的時段': 'Flagged places are sent to Muse to check bookable times',

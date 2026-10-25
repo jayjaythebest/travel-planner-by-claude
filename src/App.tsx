@@ -1257,6 +1257,15 @@ export default function App() {
     }
   };
 
+  /** Headcount for bookings. A change makes the reservation-agent ask Muse to amend existing ones. */
+  const handleSetPartySize = async (n: number) => {
+    if (!selectedTrip) return;
+    const tripRef = selectedTrip;
+    await updateDoc(doc(db, 'trips', tripRef.documentId || tripRef.id), { party_size: n });
+    setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, party_size: n } : prev));
+    setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, party_size: n } : tr)));
+  };
+
   const handleToggleReservations = async (on: boolean) => {
     if (!selectedTrip) return;
     const tripRef = selectedTrip;
@@ -2619,6 +2628,7 @@ export default function App() {
               onImportSuggestion={handleImportSuggestion}
               onToggleReservations={handleToggleReservations}
               onAddBookingToPlan={handleAddBookingToPlan}
+              onSetPartySize={handleSetPartySize}
               onCoverError={() => selectedTrip && loadCover(selectedTrip, true)}
             />
           ) : (

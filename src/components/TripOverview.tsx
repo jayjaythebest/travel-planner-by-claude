@@ -183,6 +183,8 @@ function Reservations({
   trip,
   activities,
   dates,
+  members,
+  onSetPartySize,
   onToggle,
   onAddToPlan,
   onJumpToDay,
@@ -191,12 +193,16 @@ function Reservations({
   trip: Trip;
   activities: Activity[];
   dates: string[];
+  members: User[];
+  onSetPartySize: (n: number) => Promise<void>;
   onToggle: (on: boolean) => Promise<void>;
   onAddToPlan: (idea: Idea) => Promise<void>;
   onJumpToDay: (date: string) => void;
 }) {
   const [saving, setSaving] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
+  // Same fallback as the reservation-agent: a set headcount, else the members.
+  const people = trip.party_size || Math.max(members.length, 1);
   /** The activity a booking already became, by idea id or, for older rows, by name and day. */
   const placedAs = (i: Idea) => {
     const date = i.reservation?.slots?.[0]?.slice(0, 10);
@@ -237,6 +243,11 @@ function Reservations({
             · {t('已訂 {n}／{total}', { n: booked, total: rows.length })}
           </span>
         </button>
+        <div className="flex items-center gap-1 text-[10px] font-bold text-zinc-500 flex-shrink-0" title={t('訂位人數')}>
+          <button onClick={() => people > 1 && onSetPartySize(people - 1)} className="w-5 h-5 rounded bg-zinc-100 hover:bg-zinc-200 flex items-center justify-center">−</button>
+          <span className="tabular-nums w-8 text-center">{t('{n} 人', { n: people })}</span>
+          <button onClick={() => onSetPartySize(people + 1)} className="w-5 h-5 rounded bg-zinc-100 hover:bg-zinc-200 flex items-center justify-center">+</button>
+        </div>
         <button
           onClick={async () => { setSaving(true); try { await onToggle(!trip.reservations_enabled); } finally { setSaving(false); } }}
           disabled={saving}
@@ -360,6 +371,7 @@ export function TripOverview({
   onToggleReservations,
   onCoverError,
   onAddBookingToPlan,
+  onSetPartySize,
 }: {
   trip: Trip;
   dates: string[];
@@ -378,6 +390,7 @@ export function TripOverview({
   onToggleReservations: (on: boolean) => Promise<void>;
   onCoverError: () => void;
   onAddBookingToPlan: (idea: Idea) => Promise<void>;
+  onSetPartySize: (n: number) => Promise<void>;
 }) {
   useLang();
   const today = new Date();
@@ -612,6 +625,8 @@ export function TripOverview({
         trip={trip}
         activities={activities}
         dates={dates}
+        members={members}
+        onSetPartySize={onSetPartySize}
         onToggle={onToggleReservations}
         onAddToPlan={onAddBookingToPlan}
         onJumpToDay={onJumpToDay}

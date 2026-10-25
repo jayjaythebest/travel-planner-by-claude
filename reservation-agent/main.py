@@ -220,16 +220,28 @@ def desired_time(idea: dict, activities: list[dict], trip: dict) -> str:
     return f"彈性：下面「可以的時間」內任一天 {FLEX_WINDOW.get(idea.get('category'), FLEX_WINDOW['restaurant'])}"
 
 
-def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activities: list[dict]) -> tuple[str, str, dict]:
+def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activities: list[dict],
+                  resize: tuple[int, int] | None = None) -> tuple[str, str, dict]:
     refs = {}
     lines = []
     for n, (idea_id, idea) in enumerate(ideas, 1):
         refs[str(n)] = idea_id
         area = f"（{idea['area']}）" if idea.get("area") else ""
         kind = "（門票／預約）" if idea.get("needs_ticket") and idea.get("category") not in FOOD else ""
-        lines.append(f"#{n} {idea['title']}{kind}{area} — 希望：{desired_time(idea, activities, trip)}")
+        r = idea.get("reservation") or {}
+        if resize and r.get("status") == "booked":
+            slot = (r.get("slots") or ["?"])[0]
+            conf = f"，確認碼 {r['confirmation']}" if r.get("confirmation") else ""
+            lines.append(f"#{n} {idea['title']}{area} — 已訂 {slot}（{resize[0]} 人{conf}），請改成 {resize[1]} 人")
+        else:
+            lines.append(f"#{n} {idea['title']}{kind}{area} — 希望：{desired_time(idea, activities, trip)}")
 
     subject = f"{SUBJECT_TAG} {trip['name']} {trip_key(trip_id)}"
+    resize_rule = (
+        f"- 人數從 {resize[0]} 人改成 {resize[1]} 人：寫「請改成 {resize[1]} 人」的是已經訂好的，請把訂位人數改掉"
+        f"（改好回覆 BOOKED，備註附新的確認碼；改不了就回覆 AVAILABLE 並說明）。其他店一律照 {resize[1]} 人查。\n"
+        if resize else ""
+    )
     body = f"""Muse 你好，
 
 這是 Travel Planner 自動寄出的訂位請求。
@@ -243,7 +255,7 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
 - 需要綁卡／預付，或只能打電話訂的：不要訂，回報旅程期間可以訂的時段。
 - 不收訂位、只能現場排隊的：註明 WALK_IN。
 - 標「門票／預約」的是景點或活動，不是餐廳：一律要付款，所以不要購買，回報 NEEDS_CARD、可以預約的時段，備註附上官方購票連結和票價。現場就能買票、不必先訂的回報 WALK_IN。
-
+{resize_rule}
 這次請處理的店與門票（目前全部還沒訂到）：
 {chr(10).join(lines)}
 
@@ -434,14 +446,22 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
             state["windows_sig"] = sig
     else:
         moved = bool(state.get("last_request_at")) and state.get("windows_sig") != sig
-    if never_sent or moved:
+    # The headcount changed since the last request: bookings already made are
+    # for the old number, so they go back to Muse to be amended.
+    people = party_size(trip)
+    if state.get("party_size") is None:
+        state["party_size"] = people
+    resize = (int(state["party_size"]), people) if state.get("last_request_at") and state["party_size"] != people else None
+    if never_sent or moved or resize:
         open_ideas = sorted(
-            # Booked is done and walk-in cannot be booked: neither is worth asking about again.
+            # Booked is done (unless the headcount changed) and walk-in cannot
+            # be booked: neither is otherwise worth asking about again.
             ((i, d) for i, d in food.items()
-             if i not in manual and (d.get("reservation") or {}).get("status") not in ("booked", "walk_in")),
+             if i not in manual and (d.get("reservation") or {}).get("status") != "walk_in"
+             and (resize or (d.get("reservation") or {}).get("status") != "booked")),
             key=lambda x: x[1].get("created_at", ""),
         )
-        subject, body, refs = build_request(trip, trip_id, open_ideas, acts)
+        subject, body, refs = build_request(trip, trip_id, open_ideas, acts, resize)
         print(f"  sending request: {len(open_ideas)} places ({len(never_sent)} new)")
         if dry:
             print(subject)
@@ -464,7 +484,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
                                                 metadataHeaders=["Message-ID"]).execute()
             processed.add(sent["id"])
             state.update(thread_id=sent["threadId"], last_message_id=header(full, "Message-ID"),
-                         last_request_at=now_iso(), refs=refs, windows_sig=windows_sig(windows))
+                         last_request_at=now_iso(), refs=refs, windows_sig=windows_sig(windows), party_size=people)
             stamp = now_iso()
             for i, d in open_ideas:
                 prev = d.get("reservation") or {}
