@@ -10,6 +10,12 @@ has `reservations_enabled` switched on in the app:
 2. If any restaurant / cafe / bar idea has never been sent, email one request
    listing every one that is still not booked, as a reply on the same thread.
 
+Before the trips, once per run: hotel confirmation / change / cancellation
+emails in the same mailbox become `accommodations` on whichever of Jay's trips
+their dates fall in (see import_hotels); and [muse更新] emails — places Jay
+sent Muse over WhatsApp, with what Muse found about booking them — become
+stash ideas on the trip they belong to (see import_muse_updates).
+
 Nothing is sent for a trip whose food ideas have all been requested already, so
 an idle hour costs a Firestore read and a Gmail search, not an email.
 
@@ -26,12 +32,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import json
 import os
 import re
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
+from urllib.parse import quote
 
 from google import genai
 from google.cloud import firestore
@@ -100,8 +108,16 @@ def plain_text(payload: dict) -> str:
             data = p.get("body", {}).get("data")
             if p.get("mimeType") == mime and data:
                 text = base64.urlsafe_b64decode(data).decode("utf-8", "replace")
-                return re.sub(r"<[^>]+>", " ", text) if mime == "text/html" else text
+                return html_to_text(text) if mime == "text/html" else text
     return ""
+
+
+def html_to_text(text: str) -> str:
+    """Hotel mails are HTML-only, with ~18 KB of <style> before the first date."""
+    text = re.sub(r"(?is)<(style|script|head)\b.*?</\1>|<!--.*?-->", " ", text)
+    text = re.sub(r"(?i)<br\s*/?>|</(p|div|tr|td|li|h\d)>", "\n", text)
+    text = html.unescape(re.sub(r"<[^>]+>", " ", text))
+    return re.sub(r"[ \t\r\xa0]*\n[\s\xa0]*", "\n", re.sub(r"[ \t\xa0]+", " ", text)).strip()
 
 
 def strip_quoted(text: str) -> str:
@@ -497,6 +513,385 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
         trip_ref.update({"reservation_thread": state})
 
 
+# ── Hotel confirmations ──────────────────────────────────────────────────────
+HOTEL_QUERY = (
+    'newer_than:180d -subject:"muse定位串" '
+    "subject:(reservation OR booking OR confirmation OR confirmed OR cancellation OR cancelled "
+    "OR itinerary OR 預訂 OR 訂房 OR 確認 OR 取消)"
+)
+HOTEL_STATE = ("agent_state", "hotel_mail")
+HOTEL_KINDS = ("confirmation", "modification", "cancellation")
+MAX_NEW_PER_RUN = 40  # first run over 180 days of mail must fit the 300 s task timeout
+
+
+def parse_hotel_email(subject: str, sender: str, text: str) -> dict | None:
+    """One Gemini call per email: a hotel stay with its dates, or None for anything else."""
+    text = re.sub(r"\[\]\(https?://[^)]*\)|https?://\S+", "", text)
+    text = re.sub(r"[|\s]*\n[|\s]*\n+", "\n", text)
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
+    prompt = f"""判斷這封信是不是「住宿」的訂房確認、訂房變更或取消通知（飯店、民宿、Airbnb、Booking.com 等）。
+餐廳訂位、機票、租車、行銷信、點數通知、入住前提醒以外的一般廣告都算 other。
+
+- kind：confirmation（新訂房）／modification（同一筆訂房改了日期或房型）／cancellation（取消）／other
+- name：飯店名稱，照原文
+- address：完整地址，沒有就空字串
+- check_in、check_out：YYYY-MM-DD，年份照信裡寫的
+- confirmation：確認碼／訂單編號，沒有就空字串
+
+寄件者：{sender}
+標題：{subject}
+內文：
+\"\"\"
+{text[:12000]}
+\"\"\""""
+    res = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=gtypes.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema={
+                "type": "OBJECT",
+                "properties": {
+                    "kind": {"type": "STRING"},
+                    "name": {"type": "STRING"},
+                    "address": {"type": "STRING"},
+                    "check_in": {"type": "STRING"},
+                    "check_out": {"type": "STRING"},
+                    "confirmation": {"type": "STRING"},
+                },
+                "required": ["kind"],
+            },
+        ),
+    )
+    r = json.loads(res.text or "{}")
+    if r.get("kind") not in HOTEL_KINDS or not r.get("name"):
+        return None
+    try:
+        if date.fromisoformat(r["check_out"]) <= date.fromisoformat(r["check_in"]):
+            return None
+    except (KeyError, ValueError):
+        return None
+    return {k: str(r.get(k) or "").strip() for k in ("kind", "name", "address", "check_in", "check_out", "confirmation")}
+
+
+def booking_key(b: dict) -> str:
+    """The confirmation number, so a modification email overwrites the stay it changes."""
+    return b["confirmation"] or f"{norm_name(b['name'])}|{b['check_in']}"
+
+
+def norm_name(s: str) -> str:
+    return re.sub(r"[^0-9a-z一-鿿]", "", s.lower())
+
+
+def match_trip(b: dict, trips: list[tuple[str, dict]]) -> tuple[str, dict] | None:
+    """
+    The trip whose dates hold the most nights of this stay. Dates, not country:
+    the Spain trip has nights in Lisbon and Porto, and its single `country`
+    field says Spain.
+    """
+    ci, co = date.fromisoformat(b["check_in"]), date.fromisoformat(b["check_out"])
+    best, best_nights = None, 0
+    for tid, t in trips:
+        start, end = date.fromisoformat(t["start_date"]), date.fromisoformat(t["end_date"])
+        # A stay's last night is the day before check-out, which may be the trip's last day.
+        nights = (min(co, end + timedelta(days=1)) - max(ci, start)).days
+        if nights > best_nights:
+            best, best_nights = (tid, t), nights
+    return best
+
+
+def place_booking(db, child_id: str, b: dict, acc_id: str | None, dry: bool) -> str | None:
+    """Write one stay onto a trip's accommodations; returns the accommodation's doc id."""
+    accs = {d.id: d.to_dict() for d in db.collection("accommodations").where("trip_id", "==", child_id).stream()}
+    if b["kind"] == "cancellation":
+        gone = [i for i, a in accs.items() if i == acc_id or (b["confirmation"] and a.get("confirmation") == b["confirmation"])]
+        for i in gone:
+            print(f"    cancelled: removing {accs[i].get('name')} {accs[i].get('check_in')}")
+            if not dry:
+                db.collection("accommodations").document(i).delete()
+        return None
+
+    target = acc_id if acc_id in accs else next(
+        (i for i, a in accs.items() if b["confirmation"] and a.get("confirmation") == b["confirmation"]), None)
+    dupes: list[str] = []
+    if target is None:
+        # A row typed or scanned in by hand for the same hotel: adopt it rather
+        # than add a second. Scanned rows have come in with the wrong year
+        # (Le Méridien as 2020-12-28), so the name decides, not the dates.
+        same = [i for i, a in accs.items() if not a.get("confirmation") and norm_name(a.get("name", "")) == norm_name(b["name"])]
+        if same:
+            target = same[0]
+            first = accs[target]
+            dupes = [i for i in same[1:] if (accs[i].get("check_in"), accs[i].get("check_out")) == (first.get("check_in"), first.get("check_out"))]
+
+    address = b["address"] or (accs.get(target) or {}).get("address", "")
+    fields = {
+        "trip_id": child_id, "name": b["name"], "address": address,
+        "check_in": b["check_in"], "check_out": b["check_out"],
+        "map_url": "https://www.google.com/maps/search/?api=1&query=" + quote(f"{b['name']} {address}", safe=""),
+        "confirmation": b["confirmation"], "source": "gmail", "updated_at": now_iso(),
+    }
+    verb = "updating" if target else "adding"
+    print(f"    {verb} {b['name']} {b['check_in']} → {b['check_out']} #{b['confirmation']}"
+          + (f" (and dropping {len(dupes)} duplicate)" if dupes else ""))
+    if dry:
+        return target
+    for i in dupes:
+        db.collection("accommodations").document(i).delete()
+    if target:
+        db.collection("accommodations").document(target).update(fields)
+        return target
+    ref = db.collection("accommodations").document()
+    ref.set({**fields, "id": ref.id})
+    return ref.id
+
+
+def import_hotels(db, gmail, me: str, today: str, dry: bool) -> None:
+    """
+    Hotel confirmation emails in the mailbox -> accommodations on the trip they
+    fall in. Each email is read once; each stay is written only when an email
+    changes it, so a row deleted in the app stays deleted until the hotel
+    sends something new about it.
+    """
+    state_ref = db.collection(HOTEL_STATE[0]).document(HOTEL_STATE[1])
+    state = state_ref.get().to_dict() or {}
+    processed = set(state.get("processed") or [])
+    bookings: dict[str, dict] = dict(state.get("bookings") or {})
+
+    ids = []
+    req = gmail.users().messages().list(userId="me", q=HOTEL_QUERY, maxResults=100)
+    while req is not None and len(ids) < 500:
+        page = req.execute()
+        ids += [m["id"] for m in page.get("messages", [])]
+        req = gmail.users().messages().list_next(req, page)
+    # Newest first, so a fresh booking is not stuck behind months of backlog;
+    # `sent` then decides which email about one stay is the current word.
+    new = [m for m in ids if m not in processed][:MAX_NEW_PER_RUN]
+    for mid in new:
+        msg = gmail.users().messages().get(userId="me", id=mid, format="full").execute()
+        processed.add(mid)
+        if header(msg, REQ_HEADER):
+            continue
+        b = parse_hotel_email(header(msg, "Subject"), header(msg, "From"), plain_text(msg["payload"]))
+        if not b:
+            continue
+        key = booking_key(b)
+        prev = bookings.get(key) or {}
+        sent = int(msg.get("internalDate", 0))
+        if sent < int(prev.get("sent", 0)):
+            continue
+        bookings[key] = {**b, "trip": prev.get("trip"), "acc_id": prev.get("acc_id"), "dirty": True, "sent": sent}
+        print(f"  hotel mail {mid}: {b['kind']} {b['name']} {b['check_in']}→{b['check_out']} #{b['confirmation']}")
+
+    trips = my_trips(db, me, today)
+    for key, b in bookings.items():
+        if not b.get("dirty") or b["check_out"] < today:
+            continue
+        hit = match_trip(b, trips)
+        if hit is None:
+            continue  # no trip for these dates yet: stays dirty, tried again once one exists
+        child_id, trip = hit
+        print(f"  → {trip.get('name')}")
+        if b.get("trip") and b["trip"] != child_id and b.get("acc_id") and not dry:
+            db.collection("accommodations").document(b["acc_id"]).delete()  # dates moved it to another trip
+            b["acc_id"] = None
+        b["acc_id"] = place_booking(db, child_id, b, b.get("acc_id"), dry)
+        b.update(trip=child_id, dirty=False)
+
+    state = {
+        "processed": sorted(processed)[-3000:],
+        "bookings": {k: v for k, v in bookings.items() if v["check_out"] >= today},
+        "updated_at": now_iso(),
+    }
+    if not dry:
+        state_ref.set(state)
+
+
+def my_trips(db, me: str, today: str) -> list[tuple[str, dict]]:
+    """(child id, trip) for every trip the mailbox owner is on that has not ended."""
+    out = []
+    for ref in db.collection("trips").stream():
+        t = ref.to_dict()
+        if (t.get("owner_id") == me or me in (t.get("shared_with") or [])) and t.get("start_date") and (t.get("end_date") or "") >= today:
+            out.append((t.get("id") or ref.id, t))
+    return out
+
+
+# ── Muse updates (Jay → WhatsApp → Muse → email) ─────────────────────────────
+UPDATE_TAG = "muse更新"
+UPDATE_STATE = ("agent_state", "muse_updates")
+IDEA_CATEGORIES = ("restaurant", "cafe", "bar", "landmark", "shopping", "other")
+
+
+def parse_muse_update(text: str, trip_list: str) -> list[dict]:
+    """Places in one [muse更新] email, each already assigned to a trip by number (0 = none fits)."""
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
+    prompt = f"""以下是訂位助理 Muse 寄來的地點更新：Jay 在 WhatsApp 丟給 Muse 的餐廳、景點，加上 Muse 查到的訂位結果。請整理成清單。
+
+Jay 目前的行程（編號、名稱、國家、日期、住宿）：
+{trip_list}
+
+每個地點：
+- name：店名或景點名，照原文
+- category：restaurant / cafe / bar / landmark / shopping / other
+- area：區域或城市
+- maps_url：Google Maps 連結，沒有就空字串
+- trip：屬於上面哪個行程的編號。依地點所在城市／國家、訂位日期、住宿在哪判斷（例如 Lisbon 的店在住宿有 Lisbon 的那趟）；Muse 有寫行程也參考，但地點和日期優先。判斷不了填 0。
+- status：booked / available / needs_card / unavailable / walk_in；Muse 沒查訂位就填 none
+- slots：已訂或可訂時段，每個 "YYYY-MM-DD HH:MM"；只寫月/日時，年份用落在該行程期間的那一年
+- confirmation：確認碼，沒有就空字串
+- why：一句話，為什麼值得去（Muse 有寫才填，繁體中文），沒有就空字串
+- note、note_en：訂位相關的備註（訂金、人數、要打電話…），繁中與英文各一，沒有就空字串
+
+Muse 的信：
+\"\"\"
+{text[:12000]}
+\"\"\""""
+    res = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=gtypes.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema={
+                "type": "OBJECT",
+                "properties": {"places": {"type": "ARRAY", "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "name": {"type": "STRING"}, "category": {"type": "STRING"}, "area": {"type": "STRING"},
+                        "maps_url": {"type": "STRING"}, "trip": {"type": "NUMBER"}, "status": {"type": "STRING"},
+                        "slots": {"type": "ARRAY", "items": {"type": "STRING"}}, "confirmation": {"type": "STRING"},
+                        "why": {"type": "STRING"}, "note": {"type": "STRING"}, "note_en": {"type": "STRING"},
+                    },
+                    "required": ["name", "trip"],
+                }}},
+                "required": ["places"],
+            },
+        ),
+    )
+    return [p for p in json.loads(res.text or "{}").get("places", []) if str(p.get("name") or "").strip()]
+
+
+def same_place(a: str, b: str) -> bool:
+    a, b = norm_name(a), norm_name(b)
+    return bool(a and b) and (a == b or (min(len(a), len(b)) >= 4 and (a in b or b in a)))
+
+
+def upsert_muse_place(db, child_id: str, trip: dict, p: dict, ideas: dict[str, dict], dry: bool) -> str:
+    stamp = now_iso()
+    category = p.get("category") if p.get("category") in IDEA_CATEGORIES else "other"
+    status = str(p.get("status") or "").lower()
+    maps_url = str(p.get("maps_url") or "").strip()
+    res = None
+    if status in STATUSES:
+        res = {"status": status, "slots": [in_trip_year(str(x), trip) for x in (p.get("slots") or [])],
+               "confirmation": p.get("confirmation") or "", "note": p.get("note") or "",
+               "note_en": p.get("note_en") or "", "updated_at": stamp}
+
+    hit = next((i for i, d in ideas.items() if same_place(d.get("title", ""), p["name"])), None)
+    if hit:
+        d, patch = ideas[hit], {}
+        if maps_url and "/maps/search/" in (d.get("map_url") or "/maps/search/"):
+            patch["map_url"] = maps_url
+        if p.get("area") and not d.get("area"):
+            patch["area"] = p["area"]
+        prev = d.get("reservation") or {}
+        if res and not prev.get("manual"):
+            patch["reservation"] = {**prev, **res, "requested_at": prev.get("requested_at") or stamp}
+        if not patch:
+            return f"{d['title']}: no change"
+        if not dry:
+            db.collection("ideas").document(hit).update(patch)
+        d.update(patch)
+        return f"{d['title']}: updated {', '.join(patch)}"
+
+    area = str(p.get("area") or "")
+    idea = {
+        "trip_id": child_id, "title": p["name"].strip(), "category": category, "area": area,
+        "note": p.get("why") or "", "duration": "",
+        "map_url": maps_url or "https://www.google.com/maps/search/?api=1&query=" + quote(f"{p['name']} {area} {trip.get('country', '')}", safe=""),
+        "source": maps_url or "Muse（WhatsApp）", "created_by": "Muse", "created_at": stamp, "status": "idea",
+    }
+    if res:
+        # requested_at marks it as already in Muse's hands, so the request
+        # step does not email Muse about a place Muse just reported on.
+        idea["reservation"] = {**res, "requested_at": stamp}
+    if not dry:
+        ref = db.collection("ideas").document()
+        ref.set(idea)
+        ideas[ref.id] = idea
+    return f"{idea['title']}: added ({category}{', ' + status if res else ''})"
+
+
+def import_muse_updates(db, gmail, me: str, today: str, dry: bool) -> None:
+    """
+    [muse更新] emails -> ideas (with their booking state) on the right trip.
+
+    Jay sends Muse links over WhatsApp; Muse emails them back here in batches.
+    A place already in that trip's stash is updated rather than added twice;
+    places no trip fits are sent back to Muse in one reply on the same thread.
+    """
+    state_ref = db.collection(UPDATE_STATE[0]).document(UPDATE_STATE[1])
+    state = state_ref.get().to_dict() or {}
+    processed = set(state.get("processed") or [])
+    q = f'subject:"{UPDATE_TAG}" newer_than:60d'
+    ids = [m["id"] for m in gmail.users().messages().list(userId="me", q=q, maxResults=50).execute().get("messages", [])]
+    new = [m for m in reversed(ids) if m not in processed]  # oldest first: a later update wins
+    if not new:
+        return
+
+    trips = my_trips(db, me, today)
+    lines = []
+    for n, (cid, t) in enumerate(trips, 1):
+        stays = "、".join(f"{a.get('name')}（{a.get('address') or '—'}）"
+                         for a in (d.to_dict() for d in db.collection("accommodations").where("trip_id", "==", cid).stream()))
+        lines.append(f"{n}. {t.get('name')}｜{t.get('country')}｜{t['start_date']} ~ {t['end_date']}｜住宿：{stays or '未登記'}")
+    trip_list = "\n".join(lines) or "（沒有進行中的行程）"
+    stash: dict[str, dict[str, dict]] = {}
+
+    for mid in new:
+        msg = gmail.users().messages().get(userId="me", id=mid, format="full").execute()
+        processed.add(mid)
+        if header(msg, REQ_HEADER):
+            continue
+        text = strip_quoted(plain_text(msg["payload"]))
+        if not text:
+            continue
+        places = parse_muse_update(text, trip_list)
+        print(f"  muse update {mid}: {len(places)} places")
+        unmatched = []
+        for p in places:
+            k = int(p.get("trip") or 0)
+            if not 1 <= k <= len(trips):
+                unmatched.append(p["name"])
+                continue
+            cid, trip = trips[k - 1]
+            if cid not in stash:
+                stash[cid] = {d.id: d.to_dict() for d in db.collection("ideas").where("trip_id", "==", cid).stream()}
+            print(f"    [{trip.get('name')}] {upsert_muse_place(db, cid, trip, p, stash[cid], dry)}")
+        if unmatched:
+            print(f"    no trip for: {', '.join(unmatched)}")
+            body = ("Muse 你好，\n\n這幾個地點對不到 Jay 現有的行程，所以沒有加進去：\n"
+                    + "\n".join(f"- {n}" for n in unmatched)
+                    + "\n\n如果是還沒建立的行程，等行程建好之後再寄一次就好；如果是寫錯城市，請更正後重寄。\n\n目前的行程：\n"
+                    + trip_list + "\n")
+            if not dry:
+                em = EmailMessage()
+                em["To"] = MAILBOX
+                em["From"] = MAILBOX
+                em["Subject"] = "Re: " + header(msg, "Subject").removeprefix("Re: ")
+                em[REQ_HEADER] = "muse-update"
+                if header(msg, "Message-ID"):
+                    em["In-Reply-To"] = header(msg, "Message-ID")
+                    em["References"] = header(msg, "Message-ID")
+                em.set_content(body)
+                sent = gmail.users().messages().send(userId="me", body={
+                    "raw": base64.urlsafe_b64encode(em.as_bytes()).decode(), "threadId": msg["threadId"]}).execute()
+                processed.add(sent["id"])
+
+    if not dry:
+        state_ref.set({"processed": sorted(processed)[-1000:], "updated_at": now_iso()})
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -506,6 +901,18 @@ def main() -> None:
     has_token = bool(os.environ.get("GMAIL_TOKEN")) or TOKEN_FILE.exists()
     gmail = gmail_service() if has_token or not args.dry_run else None
     today = date.today().isoformat()
+    if gmail is not None:
+        me = next((u.id for u in db.collection("users").where("email", "==", MAILBOX).stream()), None)
+        try:
+            if me:
+                import_hotels(db, gmail, me, today, args.dry_run)
+        except Exception as e:  # hotels must not stop the Muse relay
+            print(f"hotels ERROR: {e!r}")
+        try:
+            if me:
+                import_muse_updates(db, gmail, me, today, args.dry_run)
+        except Exception as e:
+            print(f"muse updates ERROR: {e!r}")
     for ref in db.collection("trips").stream():
         trip = ref.to_dict()
         if not trip.get("reservations_enabled"):

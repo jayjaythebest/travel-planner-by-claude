@@ -11,6 +11,81 @@ const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" }
  */
 const outLang = () => (getLang() === 'en' ? 'English' : '繁體中文');
 
+export type MapPlace = {
+  title: string;
+  category: 'restaurant' | 'cafe' | 'bar' | 'landmark' | 'shopping' | 'stay' | 'other';
+  area: string;
+  address: string;
+  note: string;
+  /** English country name from Places, for the "not in this trip's country" check. */
+  country: string;
+  map_url: string;
+};
+
+export const MAPS_LINK_RE = /https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps|(?:www\.)?google\.[a-z.]+\/maps)[^\s"'<>)]*/g;
+
+/** Name and coordinates straight from a long google.com/maps link; null for a short one. */
+function parseLongMapsUrl(link: string): { name: string; lat?: number; lng?: number } | null {
+  let u: URL;
+  try { u = new URL(link); } catch { return null; }
+  if (!/google\./.test(u.hostname)) return null;
+  const at = link.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/) || link.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  const coords = at ? { lat: Number(at[1]), lng: Number(at[2]) } : {};
+  const place = u.pathname.match(/\/maps\/place\/([^/]+)/);
+  const name = place ? decodeURIComponent(place[1].replace(/\+/g, ' ')) : u.searchParams.get('q') || u.searchParams.get('query');
+  return name ? { name, ...coords } : null;
+}
+
+const TYPE_CATEGORY: [RegExp, MapPlace['category']][] = [
+  [/^(cafe|coffee_shop|tea_house|bakery|dessert_shop|cafeteria)$/, 'cafe'],
+  [/^(bar|pub|wine_bar|night_club|cocktail_bar|bar_and_grill)$/, 'bar'],
+  [/restaurant|^(meal_takeaway|food_court|diner|brunch_restaurant)$/, 'restaurant'],
+  [/^(lodging|hotel|resort_hotel|hostel|bed_and_breakfast|guest_house)$/, 'stay'],
+  [/store$|^(shopping_mall|market|department_store)$/, 'shopping'],
+  [/^(tourist_attraction|museum|park|church|place_of_worship|art_gallery|historical_landmark|monument|zoo|aquarium|amusement_park|national_park|castle|beach|observation_deck|cultural_landmark|plaza)$/, 'landmark'],
+];
+
+async function lookupPlace(hint: { name: string; lat?: number; lng?: number }): Promise<MapPlace | null> {
+  const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
+  if (!mapsKey) return null;
+  const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': mapsKey,
+      'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.types,places.primaryType,places.googleMapsUri,places.addressComponents,places.editorialSummary',
+    },
+    body: JSON.stringify({
+      textQuery: hint.name,
+      maxResultCount: 1,
+      ...(hint.lat != null && hint.lng != null
+        ? { locationBias: { circle: { center: { latitude: hint.lat, longitude: hint.lng }, radius: 500 } } }
+        : {}),
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) return null;
+  const p = (await res.json()).places?.[0];
+  if (!p) return null;
+  const comps: { longText: string; types: string[] }[] = p.addressComponents || [];
+  const comp = (...types: string[]) => types.map(t => comps.find(c => c.types.includes(t))?.longText).find(Boolean) || '';
+  const types: string[] = [p.primaryType, ...(p.types || [])].filter(Boolean);
+  const category = types.map(t => TYPE_CATEGORY.find(([re]) => re.test(t))?.[1]).find(Boolean) || 'other';
+  return {
+    title: p.displayName?.text || hint.name,
+    category,
+    // Taiwan and Japan addresses carry no `locality`; the admin areas stand in.
+    area: [...new Set([
+      comp('neighborhood', 'sublocality_level_1', 'sublocality', 'administrative_area_level_2'),
+      comp('locality', 'administrative_area_level_1'),
+    ].filter(Boolean))].join(', '),
+    address: p.formattedAddress || '',
+    note: p.editorialSummary?.text || '',
+    country: comp('country'),
+    map_url: p.googleMapsUri || '',
+  };
+}
+
 export const geminiService = {
   async getItineraryAdvice(spotName: string, country: string): Promise<string> {
     const response = await ai.models.generateContent({
@@ -522,6 +597,40 @@ ${countryLines}
    * (the one the author skipped, the station they changed at) and only a
    * person can tell those apart.
    */
+  /**
+   * Google Maps links in pasted text, resolved to places.
+   *
+   * A long link carries the name and coordinates in its path. A short
+   * maps.app.goo.gl link is only a redirect, and the browser cannot read a
+   * cross-origin redirect, so Gemini's urlContext fetches it server-side.
+   * Places Text Search then turns the name into the real listing — address,
+   * type (for the category) and a canonical Maps link.
+   */
+  async placesFromMapLinks(text: string): Promise<MapPlace[]> {
+    const links = [...new Set(text.match(MAPS_LINK_RE) || [])].slice(0, 15);
+    const out: MapPlace[] = [];
+    for (const link of links) {
+      let hint = parseLongMapsUrl(link);
+      if (!hint) {
+        try {
+          const r = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: `Open this Google Maps link and tell me which place it points to. Reply with one line of JSON only, no prose: {"name": "...", "lat": 0, "lng": 0}. Use null for anything you cannot find.\n${link}`,
+            config: { tools: [{ urlContext: {} }] },
+          });
+          const m = (r.text || '').match(/\{[^{}]*\}/);
+          const j = m ? JSON.parse(m[0]) : null;
+          if (j?.name) hint = { name: String(j.name), lat: typeof j.lat === 'number' ? j.lat : undefined, lng: typeof j.lng === 'number' ? j.lng : undefined };
+        } catch (err) {
+          console.error('maps link', link, err);
+        }
+      }
+      if (!hint) continue;
+      out.push((await lookupPlace(hint)) ?? { title: hint.name, category: 'other', area: '', address: '', note: '', country: '', map_url: link });
+    }
+    return out;
+  },
+
   async extractIdeasFromText(text: string, country: string, existingTitles: string[] = []) {
     const already = existingTitles.length > 0
       ? `\n\n收藏區裡已經有這些地點，重複的請不要再列出來：\n${existingTitles.map(t => '- ' + t).join('\n')}`

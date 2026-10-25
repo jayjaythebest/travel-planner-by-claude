@@ -27,7 +27,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
 import { collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { geminiService } from '../services/geminiService';
+import { geminiService, MAPS_LINK_RE } from '../services/geminiService';
 import { cn } from '../utils';
 import { Trip, Activity, Idea, IdeaPhoto, User } from '../types';
 import { t, useLang, getLang } from '../i18n';
@@ -106,6 +106,10 @@ type Candidate = {
   area: string;
   note: string;
   duration: string;
+  /** From a Google Maps link: the listing itself, kept instead of a name search. */
+  map_url?: string;
+  /** Set when the place is not in the trip's country — usually a link meant for another trip. */
+  warning?: string;
   /** Unticked candidates are dropped — the review step is the point. */
   picked: boolean;
 };
@@ -194,24 +198,41 @@ export function IdeaStash({
     setExtractError('');
     setCandidates(null);
     try {
-      const raw = await geminiService.extractIdeasFromText(
-        pasteText.trim(),
-        trip.country,
-        ideas.map(i => i.title),
-      );
-      if (raw.length === 0) {
+      // Links and prose are read separately: a link is resolved to its exact
+      // listing, while text around it may still name other places.
+      const text = pasteText.trim();
+      const prose = text.replace(MAPS_LINK_RE, ' ').trim();
+      const [places, raw] = await Promise.all([
+        geminiService.placesFromMapLinks(text),
+        prose.length > 40 ? geminiService.extractIdeasFromText(prose, trip.country, ideas.map(i => i.title)) : Promise.resolve([]),
+      ]);
+      const have = new Set(ideas.map(i => i.title.toLowerCase()));
+      const found: Candidate[] = [
+        ...places.filter(p => !have.has(p.title.toLowerCase())).map(p => ({
+          title: p.title,
+          category: p.category,
+          area: p.area,
+          note: p.note,
+          duration: '',
+          map_url: p.map_url || undefined,
+          warning: p.country && !trip.country.toLowerCase().includes(p.country.toLowerCase())
+            ? t('在 {country}，不在這趟旅程的國家', { country: p.country })
+            : undefined,
+          picked: true,
+        })),
+        ...raw.map((r: any) => ({
+          title: String(r.title || '').trim(),
+          category: normalizeCategory(r.category),
+          area: String(r.area || '').trim(),
+          note: String(r.note || '').trim(),
+          duration: String(r.duration || '').trim(),
+          picked: true,
+        })).filter((c: Candidate) => c.title),
+      ];
+      if (found.length === 0) {
         setExtractError(t('這段文字裡沒有找到具體的地點，可以試試貼多一點內容。'));
       } else {
-        setCandidates(
-          raw.map((r: any) => ({
-            title: String(r.title || '').trim(),
-            category: normalizeCategory(r.category),
-            area: String(r.area || '').trim(),
-            note: String(r.note || '').trim(),
-            duration: String(r.duration || '').trim(),
-            picked: true,
-          })).filter((c: Candidate) => c.title),
-        );
+        setCandidates(found);
       }
     } catch (err) {
       console.error(err);
@@ -236,8 +257,8 @@ export function IdeaStash({
           area: c.area,
           note: c.note,
           duration: c.duration,
-          map_url: mapUrlFor(c.title, c.area),
-          source: pasteSource.trim() || '貼上的文字',
+          map_url: c.map_url || mapUrlFor(c.title, c.area),
+          source: pasteSource.trim() || c.map_url || '貼上的文字',
           created_by: currentUser?.username || '—',
           created_at: new Date().toISOString(),
           status: 'idea',
@@ -511,7 +532,7 @@ export function IdeaStash({
                 value={pasteText}
                 onChange={e => setPasteText(e.target.value)}
                 rows={5}
-                placeholder={t('把部落格、網站或朋友傳來的文字整段貼進來，AI 會挑出裡面提到的地點…')}
+                placeholder={t('貼上 Google Maps 連結（可以一次貼很多個），或部落格、網站、朋友傳來的文字，AI 會挑出裡面提到的地點…')}
                 className="w-full text-sm px-3 py-2.5 bg-white border border-violet-100 rounded-xl focus:border-violet-300 outline-none placeholder:text-zinc-300 resize-y leading-relaxed"
               />
               <input
@@ -582,6 +603,7 @@ export function IdeaStash({
                               </span>
                             </div>
                             {c.note && <p className="text-[10px] text-zinc-500 mt-1 leading-relaxed">{c.note}</p>}
+                            {c.warning && <p className="text-[10px] font-bold text-amber-600 mt-1">{c.warning}</p>}
                             <div className="flex items-center gap-2 mt-1 text-[9px] text-zinc-400">
                               {c.area && <span className="flex items-center gap-0.5"><MapPin size={8} />{c.area}</span>}
                               {c.duration && <span className="flex items-center gap-0.5"><Timer size={8} />{c.duration}</span>}

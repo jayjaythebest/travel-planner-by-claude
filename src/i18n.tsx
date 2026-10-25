@@ -402,6 +402,9 @@ const EN: Record<string, string> = {
   '開始請 Muse 訂位': 'Ask Muse to book',
   '還沒開啟。開啟後每 10 分鐘檢查一次，有新的店就寄信給 Muse。': 'Off. Once on, new places are emailed to Muse within 10 minutes.',
   '確認碼：{code}': 'Confirmation: {code}',
+  '已訂房': 'Booked',
+  '在 {country}，不在這趟旅程的國家': 'In {country}, not this trip’s country',
+  '貼上 Google Maps 連結（可以一次貼很多個），或部落格、網站、朋友傳來的文字，AI 會挑出裡面提到的地點…': 'Paste Google Maps links (as many as you like), or text from a blog, website or a friend, and AI will pick out the places…',
   '每 10 分鐘讀取 Muse 的回覆 · 上次寄出 {sent} · 上次回覆 {reply}': 'Muse replies are checked every 10 minutes · last sent {sent} · last reply {reply}',
   '誰搭這班': "Who's on this flight",
   '同一班已經有人登記的話，會直接把乘客加進那班。': 'If someone already added this flight, you are added to it instead of creating a duplicate.',
@@ -424,7 +427,7 @@ const EN: Record<string, string> = {
   '想去但還沒決定哪天的地方 · {n} 個待安排': 'Places you want to go, day not decided · {n} to schedule',
   '安排中': 'Planning',
   'AI 建議安排': 'AI: suggest days',
-  '貼上網站內容': 'Paste from a website',
+  '貼上網站內容': 'Paste a link or text',
   '手動新增': 'Add manually',
   '把部落格、網站或朋友傳來的文字整段貼進來，AI 會挑出裡面提到的地點…':
     'Paste text from a blog, website or a friend’s message — AI will pick out the places it mentions…',

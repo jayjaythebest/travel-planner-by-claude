@@ -2649,7 +2649,7 @@ export default function App() {
                     <div className="flex-1 min-w-0">
                       <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wide mb-0.5 flex items-center gap-1"><KeyRound size={10} />{t('今日入住')}</div>
                       <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
-                      <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}</div>
+                      <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}{acc.confirmation && ` · #${acc.confirmation}`}</div>
                     </div>
                     {acc.map_url && (
                       <a href={acc.map_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
@@ -2671,7 +2671,7 @@ export default function App() {
                     <div className="flex-1 min-w-0">
                       <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wide mb-0.5 flex items-center gap-1"><Luggage size={10} />{t('今日退房')}</div>
                       <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
-                      <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}</div>
+                      <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}{acc.confirmation && ` · #${acc.confirmation}`}</div>
                     </div>
                     {acc.map_url && (
                       <a href={acc.map_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}

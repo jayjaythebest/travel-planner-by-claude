@@ -158,6 +158,10 @@ export interface Accommodation {
   check_in: string;
   check_out: string;
   map_url: string;
+  /** Set when the stay came from (or was matched to) a hotel's confirmation email. */
+  confirmation?: string;
+  /** 'gmail': written by the reservation-agent, which rewrites it when the hotel emails a change. */
+  source?: 'gmail';
 }
 
 export interface Expense {

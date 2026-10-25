@@ -180,6 +180,7 @@ const fmtSlot = (s: string) => {
  */
 function Reservations({
   ideas,
+  accommodations,
   trip,
   activities,
   dates,
@@ -190,6 +191,7 @@ function Reservations({
   onJumpToDay,
 }: {
   ideas: Idea[];
+  accommodations: Accommodation[];
   trip: Trip;
   activities: Activity[];
   dates: string[];
@@ -210,11 +212,14 @@ function Reservations({
   };
   const [open, toggleOpen] = useCollapsed('reservations', true);
   const food = ideas.filter(isBookable);
-  if (food.length === 0) return null;
+  // Stays with a confirmation number are booked by definition — most arrive
+  // from the hotel's own email via the reservation-agent.
+  const stays = accommodations.filter(a => a.confirmation).sort((a, b) => a.check_in.localeCompare(b.check_in));
+  if (food.length === 0 && stays.length === 0) return null;
   const rows = ideas
     .filter(isInReservations)
     .sort((a, b) => RES_ORDER.indexOf(a.reservation!.status) - RES_ORDER.indexOf(b.reservation!.status));
-  const booked = rows.filter(i => i.reservation?.status === 'booked').length;
+  const booked = rows.filter(i => i.reservation?.status === 'booked').length + stays.length;
   const thread = trip.reservation_thread;
   const when = (iso?: string) => (iso ? format(parseISO(iso), 'M/d HH:mm') : '—');
 
@@ -240,7 +245,7 @@ function Reservations({
           <ChevronDown size={14} className={cn('flex-shrink-0 transition-transform', !open && '-rotate-90')} />
           <span className="truncate">{t('訂位與門票')}</span>
           <span className="normal-case tracking-normal text-[11px] font-medium text-zinc-300 truncate">
-            · {t('已訂 {n}／{total}', { n: booked, total: rows.length })}
+            · {t('已訂 {n}／{total}', { n: booked, total: rows.length + stays.length })}
           </span>
         </button>
         <div className="flex items-center gap-1 text-[10px] font-bold text-zinc-500 flex-shrink-0" title={t('訂位人數')}>
@@ -261,10 +266,29 @@ function Reservations({
       </div>
       {open && (
         <>
+          {stays.length > 0 && (
+            <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
+              {stays.map(a => (
+                <button key={a.id} onClick={() => onJumpToDay(a.check_in)} className="w-full text-left p-3 hover:bg-zinc-50 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <Hotel size={13} className="text-zinc-400 flex-shrink-0" />
+                    <span className="text-xs font-bold text-zinc-800 flex-1 min-w-0 truncate">{a.name}</span>
+                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded flex-shrink-0 bg-emerald-100/80 text-emerald-800">{t('已訂房')}</span>
+                  </div>
+                  <div className="pl-6 mt-1 text-[10px] text-zinc-500 tabular-nums">
+                    {format(parseISO(a.check_in), 'M/d')} → {format(parseISO(a.check_out), 'M/d')} · {t('{n} 晚', { n: Math.max(differenceInDays(parseISO(a.check_out), parseISO(a.check_in)), 0) })}
+                    <span className="text-emerald-700"> · {t('確認碼：{code}', { code: a.confirmation! })}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
           {rows.length === 0 ? (
-            <p className="text-xs text-zinc-400 bg-white rounded-2xl border border-dashed border-zinc-200 p-4 text-center">
-              {t('目前沒有已訂或接洽中的訂位')}
-            </p>
+            food.length > 0 && (
+              <p className="text-xs text-zinc-400 bg-white rounded-2xl border border-dashed border-zinc-200 p-4 text-center">
+                {t('目前沒有已訂或接洽中的訂位')}
+              </p>
+            )
           ) : (
             <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
               {rows.map(i => {
@@ -622,6 +646,7 @@ export function TripOverview({
       {/* ── Reservations ── */}
       <Reservations
         ideas={ideas}
+        accommodations={accommodations}
         trip={trip}
         activities={activities}
         dates={dates}
@@ -815,6 +840,7 @@ export function TripOverview({
                       <div className="text-xs font-bold text-zinc-800 truncate">{acc.name}</div>
                       <div className="text-[10px] text-zinc-400 tabular-nums mt-0.5">
                         {format(parseISO(acc.check_in), 'M/d')} → {format(parseISO(acc.check_out), 'M/d')} · {t('{n} 晚', { n: accNights })}
+                        {acc.confirmation && <span className="text-emerald-700"> · #{acc.confirmation}</span>}
                       </div>
                     </div>
                     {acc.map_url && (
