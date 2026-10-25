@@ -45,6 +45,12 @@ MAILBOX = os.environ.get("MAILBOX", "jj940170@gmail.com")
 SUBJECT_TAG = "[muse定位串]"
 REQ_HEADER = "X-Travel-Planner-Request"
 FOOD = ("restaurant", "cafe", "bar")
+
+
+def handled(idea: dict) -> bool:
+    """Places Muse works on: every restaurant, café and bar, plus any sight
+    flagged `needs_ticket` (timed entry, a balloon flight) in the app."""
+    return idea.get("category") in FOOD or bool(idea.get("needs_ticket"))
 STATUSES = ("booked", "available", "needs_card", "unavailable", "walk_in")
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
@@ -220,7 +226,8 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
     for n, (idea_id, idea) in enumerate(ideas, 1):
         refs[str(n)] = idea_id
         area = f"（{idea['area']}）" if idea.get("area") else ""
-        lines.append(f"#{n} {idea['title']}{area} — 希望：{desired_time(idea, activities, trip)}")
+        kind = "（門票／預約）" if idea.get("needs_ticket") and idea.get("category") not in FOOD else ""
+        lines.append(f"#{n} {idea['title']}{kind}{area} — 希望：{desired_time(idea, activities, trip)}")
 
     subject = f"{SUBJECT_TAG} {trip['name']} {trip_key(trip_id)}"
     body = f"""Muse 你好，
@@ -235,8 +242,9 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
 - 不需要綁信用卡、也不需要預付的：請直接用 Jay Huang 的名義訂下最符合的時段。
 - 需要綁卡／預付，或只能打電話訂的：不要訂，回報旅程期間可以訂的時段。
 - 不收訂位、只能現場排隊的：註明 WALK_IN。
+- 標「門票／預約」的是景點或活動，不是餐廳：一律要付款，所以不要購買，回報 NEEDS_CARD、可以預約的時段，備註附上官方購票連結和票價。現場就能買票、不必先訂的回報 WALK_IN。
 
-這次請處理的店（目前全部還沒訂到）：
+這次請處理的店與門票（目前全部還沒訂到）：
 {chr(10).join(lines)}
 
 請直接回覆這封信，每家一行，格式：
@@ -352,7 +360,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
     processed = set(state.get("processed") or [])
 
     idea_docs = list(db.collection("ideas").where("trip_id", "==", child_id).stream())
-    food = {d.id: d.to_dict() for d in idea_docs if d.to_dict().get("category") in FOOD}
+    food = {d.id: d.to_dict() for d in idea_docs if handled(d.to_dict())}
     if not food:
         return
 

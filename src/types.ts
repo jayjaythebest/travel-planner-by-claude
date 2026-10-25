@@ -218,6 +218,8 @@ export interface Idea {
   status: 'idea' | 'scheduled';
   /** Set when status flips to scheduled; the day it was placed on. */
   scheduled_date?: string;
+  /** A sight that needs a ticket booked ahead (timed entry, a balloon); Muse checks these too. */
+  needs_ticket?: boolean;
   /**
    * Booking state for restaurants, cafés and bars, written by the
    * reservation-agent Cloud Run Job from Muse's email replies. The app only

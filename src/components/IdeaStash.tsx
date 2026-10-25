@@ -20,6 +20,7 @@ import {
   BedDouble,
   Sparkles as SparklesIcon,
   Timer,
+  Ticket,
   type LucideIcon,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -50,8 +51,12 @@ export const CATEGORY_META: Record<Idea['category'], { icon: LucideIcon; label: 
  */
 export function isInReservations(i: Idea): boolean {
   const s = i.reservation?.status;
-  return (i.category === 'restaurant' || i.category === 'cafe' || i.category === 'bar')
-    && (s === 'booked' || s === 'requested' || s === 'available' || s === 'needs_card');
+  return isBookable(i) && (s === 'booked' || s === 'requested' || s === 'available' || s === 'needs_card');
+}
+
+/** What the reservation-agent works on: food places, and sights flagged as needing a ticket. */
+export function isBookable(i: Idea): boolean {
+  return i.category === 'restaurant' || i.category === 'cafe' || i.category === 'bar' || Boolean(i.needs_ticket);
 }
 
 /** Gemini is told to return one of these, but it is a string on the wire. */
@@ -797,6 +802,18 @@ export function IdeaStash({
                   >
                     <ImagePlus size={10} /> {t('照片')}
                   </button>
+                  {!['restaurant', 'cafe', 'bar'].includes(idea.category) && (
+                    <button
+                      onClick={() => updateDoc(doc(db, 'ideas', idea.id), { needs_ticket: !idea.needs_ticket }).catch(console.error)}
+                      title={t('標記後會一起請 Muse 查詢可預約的時段')}
+                      className={cn(
+                        'flex items-center gap-1 text-[11px] font-bold transition-colors',
+                        idea.needs_ticket ? 'text-amber-700' : 'text-zinc-400 hover:text-amber-700',
+                      )}
+                    >
+                      <Ticket size={10} /> {idea.needs_ticket ? t('需要預約') : t('要先買票？')}
+                    </button>
+                  )}
                   {idea.source?.startsWith('http') && (
                     <a
                       href={idea.source}

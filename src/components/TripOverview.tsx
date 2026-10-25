@@ -21,7 +21,7 @@ import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate, flagUrl, freeWindows, fitsWindow } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation } from '../types';
-import { IdeaStash, isInReservations, CATEGORY_META } from './IdeaStash';
+import { IdeaStash, isInReservations, isBookable, CATEGORY_META } from './IdeaStash';
 import { Section, useCollapsed } from './Section';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
@@ -162,7 +162,6 @@ const RES_META: Record<Reservation['status'], { label: string; chip: string }> =
   walk_in: { label: '現場排隊', chip: 'bg-violet-100/80 text-violet-800' },
 };
 const RES_ORDER: Reservation['status'][] = ['booked', 'available', 'needs_card', 'walk_in', 'unavailable', 'requested'];
-const FOOD_ICON: Record<string, boolean> = { restaurant: true, cafe: true, bar: true };
 
 const fmtSlot = (s: string) => {
   const d = parseISO(s.replace(' ', 'T'));
@@ -204,7 +203,7 @@ function Reservations({
     return activities.find(a => a.idea_id === i.id || (a.activity === i.title && a.date === date));
   };
   const [open, toggleOpen] = useCollapsed('reservations', true);
-  const food = ideas.filter(i => FOOD_ICON[i.category]);
+  const food = ideas.filter(isBookable);
   if (food.length === 0) return null;
   const rows = ideas
     .filter(isInReservations)
@@ -233,7 +232,7 @@ function Reservations({
           className="flex items-center gap-1.5 min-w-0 text-sm font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors"
         >
           <ChevronDown size={14} className={cn('flex-shrink-0 transition-transform', !open && '-rotate-90')} />
-          <span className="truncate">{t('訂位狀況')}</span>
+          <span className="truncate">{t('訂位與門票')}</span>
           <span className="normal-case tracking-normal text-[11px] font-medium text-zinc-300 truncate">
             · {t('已訂 {n}／{total}', { n: booked, total: rows.length })}
           </span>
