@@ -71,7 +71,87 @@ FLEX_WINDOW = {
     "restaurant": "午餐 12:30–14:30 或晚餐 19:00–21:30",
     "cafe": "早上 08:00–11:00",
     "bar": "晚上 21:00–23:30",
+    "landmark": "白天 09:00–17:00 任一入場時段",
 }
+
+# English and local names for the same city, so an idea's "Seville" finds a
+# hotel in "Sevilla". Only the pairs that do not share a prefix need listing.
+CITY_ALIASES = [
+    {"seville", "sevilla"}, {"lisbon", "lisboa"}, {"porto", "oporto"}, {"munich", "münchen"},
+    {"florence", "firenze"}, {"rome", "roma"}, {"venice", "venezia"}, {"milan", "milano"},
+    {"naples", "napoli"}, {"prague", "praha"}, {"vienna", "wien"}, {"cologne", "köln"},
+    {"mexico city", "ciudad de méxico", "cdmx"}, {"tokyo", "東京"}, {"kyoto", "京都"}, {"osaka", "大阪"},
+]
+
+
+def city_names(area: str) -> set[str]:
+    """Lower-case names an idea's area may appear as in a hotel address."""
+    parts = {p.strip().lower() for p in re.split(r"[,，/、（）()]", area or "") if len(p.strip()) >= 3}
+    for p in list(parts):
+        for group in CITY_ALIASES:
+            if p in group:
+                parts |= group
+    return parts
+
+
+def city_days(accs: list[dict]) -> dict[str, list[tuple[str, bool]]]:
+    """
+    Per date: (hotel name + address, whole day?) for every stay that covers it.
+
+    A check-out day only counts as a morning there — the travellers leave
+    for the next city. Eslava in Sevilla was booked for dinner on the day
+    they check out and move on to Granada.
+    """
+    out: dict[str, list[tuple[str, bool]]] = {}
+    for a in accs:
+        try:
+            ci, co = date.fromisoformat(a["check_in"]), date.fromisoformat(a["check_out"])
+        except (KeyError, ValueError):
+            continue
+        text = f"{a.get('name', '')} {a.get('address', '')}".lower()
+        d = ci
+        while d <= co:
+            out.setdefault(d.isoformat(), []).append((text, d < co))
+            d += timedelta(days=1)
+    return out
+
+
+def slot_in_city(area: str, slot: str, days: dict[str, list[tuple[str, bool]]]) -> bool:
+    """False only when the hotels say the travellers are somewhere else then."""
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})", slot.strip())
+    names = city_names(area)
+    if not m or not names or m.group(1) not in days:
+        return True
+    t = _mins(m.group(2)) or 0
+    return any(any(n in text for n in names) and (whole or t < 11 * 60) for text, whole in days[m.group(1)])
+
+
+def days_in(area: str, days: dict[str, list[tuple[str, bool]]]) -> list[str]:
+    names = city_names(area)
+    return sorted(d for d, stays in days.items() if any(whole and any(n in text for n in names) for text, whole in stays))
+
+
+def stays_text(trip: dict, accs: list[dict], plan: list[dict]) -> str:
+    """Where the travellers sleep each night, plus the city plan for nights with no hotel yet."""
+    lines = [f"- {a['check_in'][5:].replace('-', '/')}–{a['check_out'][5:].replace('-', '/')} {a.get('name', '')}（{a.get('address') or '地址未填'}）"
+             for a in sorted(accs, key=lambda a: a.get("check_in", ""))]
+    covered = {d for d, s in city_days(accs).items() if any(w for _, w in s)}
+    start, end = date.fromisoformat(trip["start_date"]), date.fromisoformat(trip["end_date"])
+    gaps = [(start + timedelta(days=n)).isoformat() for n in range((end - start).days)]
+    gaps = [d for d in gaps if d not in covered]
+    if gaps:
+        # Only the planned stays ("12/26–12/28 Granada") that cover a night with
+        # no hotel: elsewhere the hotels are the truth and the old plan may disagree.
+        def covers_gap(title: str) -> bool:
+            m = re.match(r"^(\d{1,2})/(\d{1,2})\s*[–-]\s*(\d{1,2})/(\d{1,2})", title)
+            if not m:
+                return False
+            lo, hi = in_trip_year(f"{start.year}-{int(m[1]):02d}-{int(m[2]):02d}", trip), in_trip_year(f"{start.year}-{int(m[3]):02d}-{int(m[4]):02d}", trip)
+            return any(lo <= g < hi for g in gaps)
+        hint = [p["title"] for p in plan if covers_gap(p.get("title", ""))]
+        lines.append(f"- 還沒訂房的晚上：{'、'.join(g[5:].replace('-', '/') for g in gaps)}"
+                     + (f"（原本規劃：{'、'.join(hint)}）" if hint else ""))
+    return "\n".join(lines)
 
 
 def now_iso() -> str:
@@ -216,16 +296,19 @@ def windows_sig(windows: dict) -> str:
     return json.dumps(windows, sort_keys=True)
 
 
-def desired_time(idea: dict, activities: list[dict], trip: dict) -> str:
+def desired_time(idea: dict, activities: list[dict], trip: dict, days: dict) -> str:
     """
     Planned slot if the idea is on the plan and the travellers can make it,
-    else a flexible window. A suggested-plan time can predate the flights —
-    Day 1 assumed an afternoon arrival before the 22:30 landing was known.
+    else a flexible window on the days they are in that city. A suggested-plan
+    time can predate the flights — Day 1 assumed an afternoon arrival before
+    the 22:30 landing was known — and an unplaced idea used to be left to any
+    day of the trip, which put a Madrid lunch on a day spent in Porto.
     """
     title = idea.get("title", "")
     windows = free_windows(trip, activities)
     sitting = 120 if idea.get("category") == "bar" else 60 if idea.get("category") == "cafe" else 90
-    fits = lambda ds, hm: slot_fits(f"{ds} {hm}", windows, sitting)
+    fits = lambda ds, hm: (slot_fits(f"{ds} {hm}", windows, sitting)
+                           and slot_in_city(idea.get("area", ""), f"{ds} {hm}", days))
     for a in activities:
         if a.get("activity") == title and not a.get("is_flight") and fits(a["date"], a.get("start_time", "")):
             return f"{a['date'][5:].replace('-', '/')} {a.get('start_time', '')}（已排進行程）"
@@ -233,30 +316,52 @@ def desired_time(idea: dict, activities: list[dict], trip: dict) -> str:
         for s in d.get("stops", []):
             if s.get("idea_title") == title and fits(d["date"], s.get("start_time", "")):
                 return f"{d['date'][5:].replace('-', '/')} {s.get('start_time', '')}（建議行程）"
-    return f"彈性：下面「可以的時間」內任一天 {FLEX_WINDOW.get(idea.get('category'), FLEX_WINDOW['restaurant'])}"
+    window = FLEX_WINDOW.get(idea.get("category"), FLEX_WINDOW["landmark"] if idea.get("needs_ticket") else FLEX_WINDOW["restaurant"])
+    area = idea.get("area", "")
+    if area and city_names(area):
+        there = days_in(area, days)
+        if there:
+            return f"彈性：在 {area} 的日子（{'、'.join(d[5:].replace('-', '/') for d in there)}）{window}"
+        if days:
+            return f"彈性：在 {area} 的日子（那幾晚還沒訂房，看上面的城市規劃）{window}"
+    return f"彈性：下面「可以的時間」內任一天 {window}"
 
 
 def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activities: list[dict],
-                  resize: tuple[int, int] | None = None) -> tuple[str, str, dict]:
+                  resize: tuple[int, int] | None = None, accs: list[dict] | None = None,
+                  plan: list[dict] | None = None, moves: set[str] | None = None) -> tuple[str, str, dict]:
     refs = {}
     lines = []
+    accs, moves = accs or [], moves or set()
+    days = city_days(accs)
     for n, (idea_id, idea) in enumerate(ideas, 1):
         refs[str(n)] = idea_id
         area = f"（{idea['area']}）" if idea.get("area") else ""
         kind = "（門票／預約）" if idea.get("needs_ticket") and idea.get("category") not in FOOD else ""
         r = idea.get("reservation") or {}
-        if resize and r.get("status") == "booked":
+        if idea_id in moves:
+            slot = (r.get("slots") or ["?"])[0]
+            conf = f"，確認碼 {r['confirmation']}" if r.get("confirmation") else ""
+            to = desired_time(idea, activities, trip, days).removeprefix("彈性：")
+            lines.append(f"#{n} {idea['title']}{area} — 已訂 {slot}{conf}，但那天我們不在 {idea.get('area')}，"
+                         f"請改到{to}，{party_size(trip)} 人")
+        elif resize and r.get("status") == "booked":
             slot = (r.get("slots") or ["?"])[0]
             conf = f"，確認碼 {r['confirmation']}" if r.get("confirmation") else ""
             lines.append(f"#{n} {idea['title']}{area} — 已訂 {slot}（{resize[0]} 人{conf}），請改成 {resize[1]} 人")
         else:
-            lines.append(f"#{n} {idea['title']}{kind}{area} — 希望：{desired_time(idea, activities, trip)}")
+            lines.append(f"#{n} {idea['title']}{kind}{area} — 希望：{desired_time(idea, activities, trip, days)}")
 
     subject = f"{SUBJECT_TAG} {trip['name']} {trip_key(trip_id)}"
     resize_rule = (
         f"- 人數從 {resize[0]} 人改成 {resize[1]} 人：寫「請改成 {resize[1]} 人」的是已經訂好的，請把訂位人數改掉"
         f"（改好回覆 BOOKED，備註附新的確認碼；改不了就回覆 AVAILABLE 並說明）。其他店一律照 {resize[1]} 人查。\n"
         if resize else ""
+    )
+    move_rule = (
+        "- 寫「請改到」的是已經訂好、但訂在我們人不在那個城市的日子：請改到指定的日子"
+        "（改好回覆 BOOKED，備註附新的確認碼；改不了就回覆 AVAILABLE 並附可訂時段），舊的訂位記得取消。\n"
+        if moves else ""
     )
     body = f"""Muse 你好，
 
@@ -266,12 +371,15 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
 可以的時間（依航班算好的，只能訂在這些時間內，時間外的位子不要訂、也不要回報）：
 {windows_text(free_windows(trip, activities))}
 
+每晚住哪裡（沒排進行程的店，只能訂在我們人在那個城市的日子；退房那天只剩早上，之後就移動到下一個城市了）：
+{stays_text(trip, accs, plan or [])}
+
 規則：
 - 不需要綁信用卡、也不需要預付的：請直接用 Jay Huang 的名義訂下最符合的時段。
 - 需要綁卡／預付，或只能打電話訂的：不要訂，回報旅程期間可以訂的時段。
 - 不收訂位、只能現場排隊的：註明 WALK_IN。
 - 標「門票／預約」的是景點或活動，不是餐廳：一律要付款，所以不要購買，回報 NEEDS_CARD、可以預約的時段，備註附上官方購票連結和票價。現場就能買票、不必先訂的回報 WALK_IN。
-{resize_rule}
+{resize_rule}{move_rule}
 這次請處理的店與門票（目前全部還沒訂到）：
 {chr(10).join(lines)}
 
@@ -427,6 +535,9 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
 
     # 2. Drop reported times the travellers cannot make, given their flights.
     acts = [a.to_dict() for a in db.collection("activities").where("trip_id", "==", child_id).stream()]
+    accs = [a.to_dict() for a in db.collection("accommodations").where("trip_id", "==", child_id).stream()]
+    plan = [d.to_dict() for d in idea_docs if d.to_dict().get("category") == "stay"]
+    days = city_days(accs)
     windows = free_windows(trip, acts)
     manual = {i for i, d in food.items() if (d.get("reservation") or {}).get("manual")}
     for i, d in food.items():
@@ -434,7 +545,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
         if i in manual or r.get("status") not in ("available", "needs_card") or not r.get("slots"):
             continue
         sitting = 120 if d.get("category") == "bar" else 60 if d.get("category") == "cafe" else 90
-        keep = [x for x in r["slots"] if slot_fits(x, windows, sitting)]
+        keep = [x for x in r["slots"] if slot_fits(x, windows, sitting) and slot_in_city(d.get("area", ""), x, days)]
         if keep == r["slots"]:
             continue
         res = {**r, "slots": keep}
@@ -442,9 +553,9 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
             # Nothing reported is reachable: ask again within the right times
             # rather than call it unavailable on the strength of bad windows.
             res.update(status="requested",
-                       note="先前回報的時段都跟航班時間衝突，已請 Muse 在可行時段重新查詢。",
-                       note_en="All reported times clashed with the flights; Muse has been asked again for times that work.")
-        print(f"  {d['title']}: dropped {len(r['slots']) - len(keep)} slot(s) outside the travel windows")
+                       note="先前回報的時段都不在我們人在當地的時間（航班或住宿城市），已請 Muse 重新查詢。",
+                       note_en="All reported times fell outside when we are there (flights or hotel city); Muse has been asked again.")
+        print(f"  {d['title']}: dropped {len(r['slots']) - len(keep)} slot(s) outside the travel windows / city days")
         if not dry:
             db.collection("ideas").document(i).update({"reservation": res})
         d["reservation"] = res
@@ -452,7 +563,17 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
     # 3. New request when something has never been sent, or the windows moved
     # (a flight was added or changed) since the last request.
     never_sent = [i for i, d in food.items() if i not in manual and not (d.get("reservation") or {}).get("requested_at")]
-    sig = windows_sig(windows)
+    # Booked, but on a day the hotels put the travellers in another city.
+    # Asked about once per slot, so an unanswered move is not re-sent every run.
+    asked = state.get("move_asked") or {}
+    misplaced = {i: (d["reservation"].get("slots") or [""])[0] for i, d in food.items()
+                 if i not in manual and (d.get("reservation") or {}).get("status") == "booked"
+                 and d["reservation"].get("slots")
+                 and not slot_in_city(d.get("area", ""), d["reservation"]["slots"][0], days)}
+    moves = {i for i, slot in misplaced.items() if asked.get(i) != slot}
+    # Hotels are part of the signature: a booked or changed stay moves the city days.
+    sig = windows_sig({"windows": windows, "stays": sorted(
+        [a.get("check_in", ""), a.get("check_out", ""), a.get("name", "")] for a in accs)})
     if state.get("windows_sig") is None and state.get("last_request_at"):
         # First run since windows existed: the earlier request told Muse
         # nothing about flights, which only matters if any day is restricted.
@@ -468,17 +589,17 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
     if state.get("party_size") is None:
         state["party_size"] = people
     resize = (int(state["party_size"]), people) if state.get("last_request_at") and state["party_size"] != people else None
-    if never_sent or moved or resize:
+    if never_sent or moved or resize or moves:
         open_ideas = sorted(
             # Booked is done (unless the headcount changed) and walk-in cannot
             # be booked: neither is otherwise worth asking about again.
             ((i, d) for i, d in food.items()
              if i not in manual and (d.get("reservation") or {}).get("status") != "walk_in"
-             and (resize or (d.get("reservation") or {}).get("status") != "booked")),
+             and (resize or i in misplaced or (d.get("reservation") or {}).get("status") != "booked")),
             key=lambda x: x[1].get("created_at", ""),
         )
-        subject, body, refs = build_request(trip, trip_id, open_ideas, acts, resize)
-        print(f"  sending request: {len(open_ideas)} places ({len(never_sent)} new)")
+        subject, body, refs = build_request(trip, trip_id, open_ideas, acts, resize, accs, plan, set(misplaced))
+        print(f"  sending request: {len(open_ideas)} places ({len(never_sent)} new, {len(misplaced)} to move)")
         if dry:
             print(subject)
             print(body)
@@ -500,7 +621,8 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
                                                 metadataHeaders=["Message-ID"]).execute()
             processed.add(sent["id"])
             state.update(thread_id=sent["threadId"], last_message_id=header(full, "Message-ID"),
-                         last_request_at=now_iso(), refs=refs, windows_sig=windows_sig(windows), party_size=people)
+                         last_request_at=now_iso(), refs=refs, windows_sig=sig, party_size=people,
+                         move_asked={**asked, **misplaced})
             stamp = now_iso()
             for i, d in open_ideas:
                 prev = d.get("reservation") or {}
