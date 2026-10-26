@@ -116,10 +116,23 @@ def city_days(accs: list[dict]) -> dict[str, list[tuple[str, bool]]]:
     return out
 
 
+def hotel_city(area: str, days: dict[str, list[tuple[str, bool]]]) -> set[str]:
+    """
+    The area's names, but only if one of the trip's hotels is in that city.
+
+    An area is often a neighbourhood ("Roma Norte") or a day trip
+    ("Teotihuacán") that no hotel address mentions; reading that as "not in
+    town" asked Muse to move three good Mexico City bookings. Only a city the
+    hotels name can be said to be somewhere the travellers are not.
+    """
+    names = city_names(area)
+    return names if any(n in text for stays in days.values() for text, _ in stays for n in names) else set()
+
+
 def slot_in_city(area: str, slot: str, days: dict[str, list[tuple[str, bool]]]) -> bool:
     """False only when the hotels say the travellers are somewhere else then."""
     m = re.match(r"^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})", slot.strip())
-    names = city_names(area)
+    names = hotel_city(area, days)
     if not m or not names or m.group(1) not in days:
         return True
     t = _mins(m.group(2)) or 0
@@ -318,12 +331,9 @@ def desired_time(idea: dict, activities: list[dict], trip: dict, days: dict) -> 
                 return f"{d['date'][5:].replace('-', '/')} {s.get('start_time', '')}（建議行程）"
     window = FLEX_WINDOW.get(idea.get("category"), FLEX_WINDOW["landmark"] if idea.get("needs_ticket") else FLEX_WINDOW["restaurant"])
     area = idea.get("area", "")
-    if area and city_names(area):
-        there = days_in(area, days)
-        if there:
-            return f"彈性：在 {area} 的日子（{'、'.join(d[5:].replace('-', '/') for d in there)}）{window}"
-        if days:
-            return f"彈性：在 {area} 的日子（那幾晚還沒訂房，看上面的城市規劃）{window}"
+    there = days_in(area, days) if hotel_city(area, days) else []
+    if there:
+        return f"彈性：在 {area} 的日子（{'、'.join(d[5:].replace('-', '/') for d in there)}）{window}"
     return f"彈性：下面「可以的時間」內任一天 {window}"
 
 
