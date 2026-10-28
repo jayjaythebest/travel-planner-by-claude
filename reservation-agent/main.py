@@ -79,6 +79,45 @@ FLEX_WINDOW = {
     "bar": "晚上 21:00–23:30",
     "landmark": "白天 09:00–17:00 任一入場時段",
 }
+# The same windows as start-time ranges in minutes, so each day can offer only
+# the meals that fit the hours the travellers are actually in that city.
+FLEX_MINS = {
+    "restaurant": [("午餐", 750, 870), ("晚餐", 1140, 1290)],
+    "cafe": [("早上", 480, 660)],
+    "bar": [("晚上", 1260, 1410)],
+    "landmark": [("白天", 540, 1020)],
+}
+# A move between cities with no known train, bus or flight: out of the old
+# hotel by noon, into the new city by mid-afternoon. A lunch booked in the city
+# they are still travelling to is a lost booking.
+CHECKOUT_BY = 12 * 60
+ARRIVE_BY = 16 * 60
+LEG_RE = re.compile(r"→|->")
+
+
+class Stays(dict):
+    """city_days() result: date -> stays, plus `legs`: date -> (leaves, arrives) in minutes."""
+    legs: dict[str, tuple[int, int, bool]] = {}
+
+
+def travel_legs(activities: list[dict], trip: dict) -> dict[str, tuple[int, int, bool]]:
+    """
+    Per date, the "A → B" leg between cities: (departs, arrives, is a flight).
+
+    An activity on the itinerary wins over the suggested plan's leg for the
+    same day; the plan's legs are not booked, but they are what the day was
+    planned around. Flights home and out are the free windows' business.
+    """
+    legs: dict[str, tuple[int, int, bool]] = {}
+    plan = [(d["date"], s) for d in (trip.get("suggested_plan") or {}).get("days", []) for s in d.get("stops", [])
+            if not s.get("idea_title")]
+    acts = [(a.get("date", ""), a) for a in activities if not a.get("is_flight")]
+    for ds, x in plan + acts:
+        text = x.get("activity", "")
+        dep, arr = _mins(x.get("start_time", "")), _mins(x.get("end_time", ""))
+        if LEG_RE.search(text) and dep is not None and arr is not None and arr > dep:
+            legs[ds] = (dep, arr, bool(re.search(r"flight|航班|✈", text, re.I)))
+    return legs
 
 # English and local names for the same city, so an idea's "Seville" finds a
 # hotel in "Sevilla". Only the pairs that do not share a prefix need listing.
@@ -100,7 +139,7 @@ def city_names(area: str) -> set[str]:
     return parts
 
 
-def city_days(accs: list[dict]) -> dict[str, list[tuple[str, bool]]]:
+def city_days(accs: list[dict], activities: list[dict] | None = None, trip: dict | None = None) -> Stays:
     """
     Per date: (hotel name + address, whole day?) for every stay that covers it.
 
@@ -108,7 +147,8 @@ def city_days(accs: list[dict]) -> dict[str, list[tuple[str, bool]]]:
     for the next city. Eslava in Sevilla was booked for dinner on the day
     they check out and move on to Granada.
     """
-    out: dict[str, list[tuple[str, bool]]] = {}
+    out = Stays()
+    out.legs = travel_legs(activities or [], trip or {})
     for a in accs:
         try:
             ci, co = date.fromisoformat(a["check_in"]), date.fromisoformat(a["check_out"])
@@ -135,19 +175,84 @@ def hotel_city(area: str, days: dict[str, list[tuple[str, bool]]]) -> set[str]:
     return names if any(n in text for stays in days.values() for text, _ in stays for n in names) else set()
 
 
+def city_hours(area: str, ds: str, days: dict[str, list[tuple[str, bool]]],
+               windows: dict[str, tuple[int, int] | None] | None = None) -> tuple[int, int] | None:
+    """
+    The hours of `ds` the travellers spend in the area's city, or None.
+
+    Sleeping there that night and the night before: all day. Sleeping there
+    tonight but somewhere else last night: a travel day, so from an hour after
+    that day's leg arrives, or ARRIVE_BY with no leg known — unless an
+    international flight that day already says when they land. Checking out
+    of there: until the leg leaves, less the trip to the station or airport,
+    or CHECKOUT_BY. A night between hotels with none booked is in no
+    hotel city. A city no hotel names is not restricted.
+    """
+    names = hotel_city(area, days)
+    if not names:
+        return (0, 24 * 60)
+    if ds not in days:
+        # A night with no hotel (Granada, not booked yet) is not a free day in
+        # every hotel city; outside the hotels' span it is simply unknown.
+        inside = min(days) < ds < max(days)
+        return None if inside else (0, 24 * 60)
+    here = lambda text: any(n in text for n in names)
+    if any(whole and here(text) for text, whole in days[ds]):
+        prev = (date.fromisoformat(ds) - timedelta(days=1)).isoformat()
+        if any(whole and here(text) for text, whole in days.get(prev, [])):
+            return (0, 24 * 60)
+        flew_in = windows is not None and windows.get(ds, (0, 24 * 60)) != (0, 24 * 60)
+        if flew_in and not days.get(prev):
+            return (0, 24 * 60)
+        leg = getattr(days, "legs", {}).get(ds)
+        return (min(leg[1] + 60, 24 * 60) if leg else ARRIVE_BY, 24 * 60)
+    if any(here(text) for text, _ in days[ds]):
+        leg = getattr(days, "legs", {}).get(ds)
+        return (0, max(leg[0] - (90 if leg[2] else 45), 0) if leg else CHECKOUT_BY)
+    return None
+
+
 def slot_in_city(area: str, slot: str, days: dict[str, list[tuple[str, bool]]]) -> bool:
     """False only when the hotels say the travellers are somewhere else then."""
     m = re.match(r"^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})", slot.strip())
-    names = hotel_city(area, days)
-    if not m or not names or m.group(1) not in days:
+    if not m:
         return True
+    h = city_hours(area, m.group(1), days)
     t = _mins(m.group(2)) or 0
-    return any(any(n in text for n in names) and (whole or t < 11 * 60) for text, whole in days[m.group(1)])
+    return h is not None and h[0] <= t < h[1]
 
 
-def days_in(area: str, days: dict[str, list[tuple[str, bool]]]) -> list[str]:
-    names = city_names(area)
-    return sorted(d for d, stays in days.items() if any(whole and any(n in text for n in names) for text, whole in stays))
+def flex_days(idea: dict, days: dict[str, list[tuple[str, bool]]],
+              windows: dict[str, tuple[int, int] | None], sitting: int) -> str:
+    """
+    Per day in the idea's city, the meals (or opening hours) that fit both the
+    flights and the hotel moves, with consecutive days that allow the same
+    thing grouped: "12/22–12/23 午餐 12:30–14:30 或晚餐 19:00–21:30；12/24 早上 08:00–11:00".
+    Empty when nothing fits.
+    """
+    kind = idea.get("category") if idea.get("category") in FLEX_MINS else (
+        "landmark" if idea.get("needs_ticket") else "restaurant")
+    groups: list[tuple[list[str], str]] = []
+    for ds in sorted(windows):
+        w, h = windows[ds], city_hours(idea.get("area", ""), ds, days, windows)
+        if w is None or h is None:
+            continue
+        lo, hi = max(w[0], h[0]), min(w[1], h[1])
+        opts = []
+        for label, a, b in FLEX_MINS[kind]:
+            s, e = max(a, lo), min(b, hi - sitting)
+            if s <= e:
+                opts.append(f"{label} {_hhmm(s)}–{_hhmm(e)}")
+        if not opts:
+            continue
+        text = " 或 ".join(opts)
+        prev = (date.fromisoformat(ds) - timedelta(days=1)).isoformat()
+        if groups and groups[-1][1] == text and groups[-1][0][-1] == prev:
+            groups[-1][0].append(ds)
+        else:
+            groups.append(([ds], text))
+    fmt = lambda d: d[5:].replace("-", "/")
+    return "；".join((fmt(g[0]) if len(g) == 1 else f"{fmt(g[0])}–{fmt(g[-1])}") + f" {text}" for g, text in groups)
 
 
 def stays_text(trip: dict, accs: list[dict], plan: list[dict]) -> str:
@@ -342,9 +447,11 @@ def desired_time(idea: dict, activities: list[dict], trip: dict, days: dict) -> 
     # one outright filled the same Madrid lunch three times over.
     spare = SPARE if trip.get("suggested_plan") else ""
     area = idea.get("area", "")
-    there = days_in(area, days) if hotel_city(area, days) else []
-    if there:
-        return f"彈性：在 {area} 的日子（{'、'.join(d[5:].replace('-', '/') for d in there)}）{window}{spare}"
+    if hotel_city(area, days):
+        there = flex_days(idea, days, windows, sitting)
+        if not there:
+            return f"彈性：我們在 {area} 的時間都排不進，請只回報 UNAVAILABLE 或備註可行的時段{spare}"
+        return f"彈性：只能在我們人在 {area} 的時候 — {there}{spare}"
     return f"彈性：下面「可以的時間」內任一天 {window}{spare}"
 
 
@@ -354,7 +461,7 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
     refs = {}
     lines = []
     accs, moves = accs or [], moves or set()
-    days = city_days(accs)
+    days = city_days(accs, activities, trip)
     for n, (idea_id, idea) in enumerate(ideas, 1):
         refs[str(n)] = idea_id
         area = f"（{idea['area']}）" if idea.get("area") else ""
@@ -392,7 +499,7 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
 可以的時間（依航班算好的，只能訂在這些時間內，時間外的位子不要訂、也不要回報）：
 {windows_text(free_windows(trip, activities))}
 
-每晚住哪裡（沒排進行程的店，只能訂在我們人在那個城市的日子；退房那天只剩早上，之後就移動到下一個城市了）：
+每晚住哪裡（沒排進行程的店，只能訂在我們人在那個城市的日子；退房那天中午前就離開、移動到下一個城市，換城市那天要等交通到了才算到；下面每家店列的日期時段已經算好了）：
 {stays_text(trip, accs, plan or [])}
 
 規則：
@@ -559,7 +666,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
     acts = [a.to_dict() for a in db.collection("activities").where("trip_id", "==", child_id).stream()]
     accs = [a.to_dict() for a in db.collection("accommodations").where("trip_id", "==", child_id).stream()]
     plan = [d.to_dict() for d in idea_docs if d.to_dict().get("category") == "stay"]
-    days = city_days(accs)
+    days = city_days(accs, acts, trip)
     windows = free_windows(trip, acts)
     manual = {i for i, d in food.items() if (d.get("reservation") or {}).get("manual")}
     for i, d in food.items():
@@ -593,9 +700,10 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
                  and d["reservation"].get("slots")
                  and not slot_in_city(d.get("area", ""), d["reservation"]["slots"][0], days)}
     moves = {i for i, slot in misplaced.items() if asked.get(i) != slot}
-    # Hotels are part of the signature: a booked or changed stay moves the city days.
+    # Hotels and the legs between cities are part of the signature: a booked or
+    # changed stay or train moves the hours the travellers are in each city.
     sig = windows_sig({"windows": windows, "stays": sorted(
-        [a.get("check_in", ""), a.get("check_out", ""), a.get("name", "")] for a in accs)})
+        [a.get("check_in", ""), a.get("check_out", ""), a.get("name", "")] for a in accs), **({"legs": days.legs} if days.legs else {})})
     if state.get("windows_sig") is None and state.get("last_request_at"):
         # First run since windows existed: the earlier request told Muse
         # nothing about flights, which only matters if any day is restricted.

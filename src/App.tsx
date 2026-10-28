@@ -36,7 +36,8 @@ import {
   Timer,
   PlaneTakeoff,
   PlaneLanding,
-  Check
+  Check,
+  Pencil
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, freeWindows, fitsWindow, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
@@ -523,6 +524,8 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [isManagingBuddies, setIsManagingBuddies] = useState(false);
   const [tripToManage, setTripToManage] = useState<Trip | null>(null);
+  const [tripDatesEdit, setTripDatesEdit] = useState<Trip | null>(null);
+  const [savingTripDates, setSavingTripDates] = useState(false);
   const [showTotalExpense, setShowTotalExpense] = useState(false);
   const [showAiActivityInput, setShowAiActivityInput] = useState(false);
   const [aiActivityText, setAiActivityText] = useState('');
@@ -2056,6 +2059,42 @@ export default function App() {
    * collections. `trip.id` is already `data.id || doc.id` from fetchTrips, so
    * it is the one value both shapes agree on.
    */
+  /**
+   * Change a trip's dates. Shortening it hides activities that fall outside the
+   * new range rather than deleting them, so it asks first; widening it back
+   * brings them back.
+   */
+  const handleSaveTripDates = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!tripDatesEdit) return;
+    const form = new FormData(e.currentTarget);
+    const start_date = form.get('start_date') as string;
+    const end_date = form.get('end_date') as string;
+    if (!start_date || !end_date || end_date < start_date) {
+      alert(t('結束日期不能早於開始日期'));
+      return;
+    }
+    setSavingTripDates(true);
+    try {
+      const acts = await getDocs(query(collection(db, 'activities'), where('trip_id', '==', tripDatesEdit.id)));
+      const outside = acts.docs.filter(d => {
+        const date = d.data().date as string;
+        return date && (date < start_date || date > end_date);
+      }).length;
+      if (outside > 0 && !confirm(t('有 {n} 個行程在新日期範圍外，會暫時看不到（不會刪除）。確定要改嗎？', { n: outside }))) return;
+      await updateDoc(doc(db, 'trips', tripDatesEdit.documentId || tripDatesEdit.id), { start_date, end_date });
+      const id = tripDatesEdit.id;
+      setTrips(prev => prev.map(tr => (tr.id === id ? { ...tr, start_date, end_date } : tr)));
+      setSelectedTrip(prev => (prev && prev.id === id ? { ...prev, start_date, end_date } : prev));
+      setTripDatesEdit(null);
+    } catch (err) {
+      console.error(err);
+      alert(t('儲存失敗，請再試一次。'));
+    } finally {
+      setSavingTripDates(false);
+    }
+  };
+
   const handleDeleteTrip = async (e: React.MouseEvent, trip: Trip) => {
     e.stopPropagation();
     if (deletingTripId) return;
@@ -2362,6 +2401,16 @@ export default function App() {
                       title={t('管理旅伴')}
                     >
                       <Users size={14} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setTripDatesEdit(trip);
+                      }}
+                      className="p-1.5 text-zinc-300 hover:text-blue-500 transition-colors"
+                      title={t('修改日期')}
+                    >
+                      <Pencil size={14} />
                     </button>
                     <button
                       onClick={(e) => handleDeleteTrip(e, trip)}
@@ -3244,6 +3293,30 @@ export default function App() {
 
       {/* Modals */}
       <AnimatePresence>
+        {tripDatesEdit && (
+          <Modal title={t('修改日期: {name}', { name: tripDatesEdit.name })} onClose={() => setTripDatesEdit(null)}>
+            <form onSubmit={handleSaveTripDates} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">{t('開始日期')}</label>
+                  <input name="start_date" type="date" required defaultValue={tripDatesEdit.start_date} className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 mb-1">{t('結束日期')}</label>
+                  <input name="end_date" type="date" required defaultValue={tripDatesEdit.end_date} className="w-full p-3 bg-zinc-50 border border-zinc-200 rounded-xl" />
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={savingTripDates}
+                className="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {savingTripDates && <Loader2 size={16} className="animate-spin" />}
+                {t('儲存')}
+              </button>
+            </form>
+          </Modal>
+        )}
         {isAddingTrip && (
           <Modal title={t('建立新旅程')} onClose={() => setIsAddingTrip(false)}>
             <form onSubmit={handleCreateTrip} className="space-y-4">
