@@ -61,6 +61,18 @@ export interface Trip {
     last_request_at?: string;
     last_reply_at?: string;
   };
+  /**
+   * A Google Maps list shared by link. The reservation-agent reads it every
+   * 10 minutes: places new to it become stash ideas, and the bookable ones go
+   * to Muse. The app writes only `url`; the rest is the agent's.
+   */
+  maps_list?: {
+    url: string;
+    title?: string;
+    count?: number;
+    synced_at?: string;
+    error?: string;
+  };
   suggested_plan?: {
     /** Where the plan came from, for the "from …" line. */
     source?: string;

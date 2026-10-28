@@ -22,6 +22,7 @@ import {
   Timer,
   Ticket,
   type LucideIcon,
+  MapPinned,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -123,6 +124,7 @@ export function IdeaStash({
   dates,
   currentUser,
   onJumpToDay,
+  onSetMapsList,
 }: {
   trip: Trip;
   ideas: Idea[];
@@ -130,6 +132,7 @@ export function IdeaStash({
   dates: string[];
   currentUser: User | null;
   onJumpToDay: (date: string) => void;
+  onSetMapsList: (url: string | null) => Promise<void>;
 }) {
   useLang();
   const [expanded, toggleExpanded] = useCollapsed('idea-stash', false);
@@ -142,6 +145,10 @@ export function IdeaStash({
   const [saving, setSaving] = useState(false);
 
   const [manualOpen, setManualOpen] = useState(false);
+  const [listOpen, setListOpen] = useState(false);
+  const [listUrl, setListUrl] = useState('');
+  const [listSaving, setListSaving] = useState(false);
+  const [listError, setListError] = useState('');
   const [manualTitle, setManualTitle] = useState('');
   const [manualNote, setManualNote] = useState('');
   const [manualCategory, setManualCategory] = useState<Idea['category']>('landmark');
@@ -424,6 +431,25 @@ export function IdeaStash({
     await updateDoc(doc(db, 'ideas', id), { status: 'idea', scheduled_date: '' });
   };
 
+  const saveMapsList = async (url: string | null) => {
+    if (url !== null && !/maps\.app\.goo\.gl\/|google\.[a-z.]+\/maps\//.test(url)) {
+      setListError(t('請貼上 Google Maps 清單的分享連結'));
+      return;
+    }
+    setListSaving(true);
+    setListError('');
+    try {
+      await onSetMapsList(url);
+      setListOpen(false);
+    } catch (err) {
+      console.error(err);
+      setListError(t('儲存失敗，請再試一次。'));
+    } finally {
+      setListSaving(false);
+    }
+  };
+  const mapsList = trip.maps_list;
+
   // ── Render ─────────────────────────────────────────────────────────────
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
@@ -470,7 +496,7 @@ export function IdeaStash({
         {expanded && (<>
         <div className="flex gap-2 mt-3">
           <button
-            onClick={() => { setPasteOpen(o => !o); setManualOpen(false); }}
+            onClick={() => { setPasteOpen(o => !o); setManualOpen(false); setListOpen(false); }}
             className={cn(
               'flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full border transition-colors',
               pasteOpen
@@ -481,7 +507,7 @@ export function IdeaStash({
             <ClipboardPaste size={11} /> {t('貼上網站內容')}
           </button>
           <button
-            onClick={() => { setManualOpen(o => !o); setPasteOpen(false); }}
+            onClick={() => { setManualOpen(o => !o); setPasteOpen(false); setListOpen(false); }}
             className={cn(
               'flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full border transition-colors',
               manualOpen
@@ -491,7 +517,64 @@ export function IdeaStash({
           >
             <Plus size={11} /> {t('手動新增')}
           </button>
+          <button
+            onClick={() => { setListOpen(o => !o); setPasteOpen(false); setManualOpen(false); setListUrl(mapsList?.url || ''); setListError(''); }}
+            className={cn(
+              'flex items-center gap-1.5 text-[11px] font-bold px-3 py-1.5 rounded-full border transition-colors min-w-0',
+              listOpen
+                ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                : mapsList ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-white text-zinc-500 border-zinc-200 hover:border-emerald-200 hover:text-emerald-600',
+            )}
+          >
+            <MapPinned size={11} className="flex-shrink-0" />
+            <span className="truncate">{mapsList ? mapsList.title || t('Maps 清單') : t('同步 Maps 清單')}</span>
+          </button>
         </div>
+        {mapsList && (
+          <p className={cn('text-[10px] mt-2 leading-snug', mapsList.error ? 'text-red-500' : 'text-zinc-400')}>
+            {mapsList.error
+              ? t('讀不到 Google Maps 清單：{err}', { err: mapsList.error })
+              : mapsList.synced_at
+                ? t('每 10 分鐘同步 · {n} 個地點 · 上次 {at} · 新地點自動加入，餐廳與門票交給 Muse', {
+                    n: mapsList.count ?? 0,
+                    at: format(parseISO(mapsList.synced_at), 'M/d HH:mm'),
+                  })
+                : t('已連結，10 分鐘內第一次同步')}
+          </p>
+        )}
+        {listOpen && (
+          <div className="mt-3 space-y-2">
+            <p className="text-[10px] text-zinc-500 leading-snug">
+              {t('在 Google Maps 清單按「分享」複製連結貼上。之後加進清單的地點會自動出現在這裡，餐廳、咖啡廳、酒吧和要買票的景點會交給 Muse 查訂位。')}
+            </p>
+            <input
+              value={listUrl}
+              onChange={e => setListUrl(e.target.value)}
+              placeholder="https://maps.app.goo.gl/…"
+              className="w-full text-xs px-3 py-2 rounded-xl border border-zinc-200 bg-white focus:outline-none focus:border-emerald-300"
+            />
+            {listError && <p className="text-[10px] text-red-500">{listError}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => saveMapsList(listUrl.trim())}
+                disabled={listSaving || !listUrl.trim() || listUrl.trim() === mapsList?.url}
+                className="flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-full bg-zinc-900 text-white disabled:opacity-40"
+              >
+                {listSaving && <Loader2 size={11} className="animate-spin" />}
+                {t('儲存')}
+              </button>
+              {mapsList && (
+                <button
+                  onClick={() => saveMapsList(null)}
+                  disabled={listSaving}
+                  className="text-[11px] font-bold px-3 py-1.5 rounded-full text-zinc-400 hover:text-red-500 disabled:opacity-40"
+                >
+                  {t('取消連結')}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {counts.length > 1 && (
           <div className="flex gap-1.5 flex-wrap mt-3">

@@ -396,6 +396,7 @@ export function TripOverview({
   onCoverError,
   onAddBookingToPlan,
   onSetPartySize,
+  onSetMapsList,
 }: {
   trip: Trip;
   dates: string[];
@@ -415,6 +416,7 @@ export function TripOverview({
   onCoverError: () => void;
   onAddBookingToPlan: (idea: Idea) => Promise<void>;
   onSetPartySize: (n: number) => Promise<void>;
+  onSetMapsList: (url: string | null) => Promise<void>;
 }) {
   useLang();
   const today = new Date();
@@ -665,6 +667,7 @@ export function TripOverview({
         dates={dates}
         currentUser={currentUser}
         onJumpToDay={onJumpToDay}
+        onSetMapsList={onSetMapsList}
       />
 
       {/* ── Day by day ── */}

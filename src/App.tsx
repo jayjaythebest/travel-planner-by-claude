@@ -372,13 +372,13 @@ function getAirportCode(name: string): string {
 }
 
 function parseFlightActivity(activity: string): { flightNo: string; departure: string; arrival: string } | null {
-  const flightNoMatch = activity.match(/([A-Z]{1,3}\d+)/);
-  if (!flightNoMatch) return null;
+  const flightNo = flightNoOf(activity);
+  if (!flightNo) return null;
   const parenMatch = activity.match(/\(([^)]+)\)/);
   if (!parenMatch) return null;
   const parts = parenMatch[1].split('🛫');
   if (parts.length !== 2) return null;
-  return { flightNo: flightNoMatch[1], departure: parts[0].trim(), arrival: parts[1].trim() };
+  return { flightNo, departure: parts[0].trim(), arrival: parts[1].trim() };
 }
 
 function calcFlightDuration(startTime: string, endTime: string): string {
@@ -1266,6 +1266,16 @@ export default function App() {
     setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, party_size: n } : tr)));
   };
 
+  /** Link a Google Maps list; a new link replaces the old one and everything the agent knew about it. */
+  const handleSetMapsList = async (url: string | null) => {
+    if (!selectedTrip) return;
+    const tripRef = selectedTrip;
+    const maps_list = url ? { url } : undefined;
+    await updateDoc(doc(db, 'trips', tripRef.documentId || tripRef.id), { maps_list: maps_list ?? deleteField() });
+    setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, maps_list } : prev));
+    setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, maps_list } : tr)));
+  };
+
   const handleToggleReservations = async (on: boolean) => {
     if (!selectedTrip) return;
     const tripRef = selectedTrip;
@@ -1393,7 +1403,8 @@ export default function App() {
    */
   const saveFlight = async (f: typeof flightForm, passengers: string[]): Promise<'added' | 'joined'> => {
     if (!selectedTrip) throw new Error('no trip');
-    const { flightNo, date, departureTime, arrivalTime, arrivalAirport, departureAirport } = f;
+    const { date, departureTime, arrivalTime, arrivalAirport, departureAirport } = f;
+    const flightNo = f.flightNo.replace(/\s+/g, '').toUpperCase();
 
     // Only stored when they differ from the trip's own zone: an all-Japan
     // domestic leg on a Japan trip needs no override, and writing one would be
@@ -1405,7 +1416,7 @@ export default function App() {
     // Someone else already entered this flight: join it rather than adding a
     // second card for the same plane.
     const existing = activities.find(
-      a => a.is_flight && a.date === date && flightNoOf(a.activity) === flightNo.trim().toUpperCase(),
+      a => a.is_flight && a.date === date && flightNoOf(a.activity) === flightNo,
     );
     if (existing) {
       const current = existing.passengers ?? tripMembers.map(u => u.id);
@@ -1450,7 +1461,7 @@ export default function App() {
     try {
       const result = await saveFlight(flightForm, flightPassengersOrMe());
       if (result === 'joined') {
-        setCalendarMessage(t('{no} 已經有人登記，已把乘客加進這班', { no: flightForm.flightNo.trim().toUpperCase() }));
+        setCalendarMessage(t('{no} 已經有人登記，已把乘客加進這班', { no: flightForm.flightNo.replace(/\s+/g, '').toUpperCase() }));
       }
       closeFlightModal();
     } catch (err) {
@@ -2629,6 +2640,7 @@ export default function App() {
               onToggleReservations={handleToggleReservations}
               onAddBookingToPlan={handleAddBookingToPlan}
               onSetPartySize={handleSetPartySize}
+              onSetMapsList={handleSetMapsList}
               onCoverError={() => selectedTrip && loadCover(selectedTrip, true)}
             />
           ) : (

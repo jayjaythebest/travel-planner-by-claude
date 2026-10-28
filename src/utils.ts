@@ -399,7 +399,9 @@ export function settleUp(balances: Record<string, number>): { from: string; to: 
 
 /** The flight number in a stored "✈️ 航班: BR198 (…)" activity, upper-cased. */
 export function flightNoOf(activity: string): string | undefined {
-  return activity.match(/航班:\s*([^\s(]+)/)?.[1]?.toUpperCase();
+  // "UA 8903" is how some boarding passes print it; without the optional space
+  // this read "UA", so every United flight on a day looked like the same one.
+  return activity.match(/航班:\s*([A-Z0-9]{2}\s?\d{1,4}[A-Z]?(?!\w)|[^\s(]+)/i)?.[1]?.replace(/\s+/g, '').toUpperCase();
 }
 
 /**
@@ -461,8 +463,12 @@ export function freeWindows(
     let w: [number, number] | null = [0, 24 * 60];
     if (flights.length > 0) {
       if (isOutboundDate(ds, trip.start_date, trip.end_date)) {
-        const landed = mins(flights[flights.length - 1].end_time);
-        if (landed !== null) w = landed + 90 < 24 * 60 ? [landed + 90, 24 * 60] : null;
+        const last = flights[flights.length - 1];
+        const landed = mins(last.end_time);
+        // Landing "earlier" than take-off means it lands the next day: an
+        // overnight 20:40 → 09:50 leaves nothing of the day it departs.
+        const overnight = landed !== null && landed < (mins(last.start_time) ?? 0);
+        if (landed !== null) w = !overnight && landed + 90 < 24 * 60 ? [landed + 90, 24 * 60] : null;
       } else {
         const leaves = mins(flights[0].start_time);
         if (leaves !== null) w = leaves - 180 > 0 ? [0, leaves - 180] : null;

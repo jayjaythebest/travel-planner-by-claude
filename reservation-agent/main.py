@@ -14,7 +14,9 @@ Before the trips, once per run: hotel confirmation / change / cancellation
 emails in the same mailbox become `accommodations` on whichever of Jay's trips
 their dates fall in (see import_hotels); and [muse更新] emails — places Jay
 sent Muse over WhatsApp, with what Muse found about booking them — become
-stash ideas on the trip they belong to (see import_muse_updates).
+stash ideas on the trip they belong to (see import_muse_updates); and every
+place on a trip's linked Google Maps list that the stash has not seen becomes
+an idea (see import_maps_lists), which step 2 then sends to Muse.
 
 Nothing is sent for a trip whose food ideas have all been requested already, so
 an idle hour costs a Firestore read and a Gmail search, not an email.
@@ -36,10 +38,12 @@ import html
 import json
 import os
 import re
+import unicodedata
+import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from google import genai
 from google.cloud import firestore
@@ -65,6 +69,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
 TOKEN_FILE = Path(__file__).parent / "token_muse.json"
+
+SPARE = "（備選：只回報可訂時段，先不要訂）"
 
 # Used when an idea is not on the plan yet: the window Muse should look in.
 FLEX_WINDOW = {
@@ -269,8 +275,10 @@ def free_windows(trip: dict, activities: list[dict]) -> dict[str, tuple[int, int
         if flights:
             if d <= mid:
                 landed = _mins(flights[-1].get("end_time", ""))
+                # Landing "before" take-off is an overnight flight landing tomorrow.
+                overnight = landed is not None and landed < (_mins(flights[-1].get("start_time", "")) or 0)
                 if landed is not None:
-                    window = (landed + 90, 24 * 60) if landed + 90 < 24 * 60 else None
+                    window = (landed + 90, 24 * 60) if not overnight and landed + 90 < 24 * 60 else None
             else:
                 leaves = _mins(flights[0].get("start_time", ""))
                 if leaves is not None:
@@ -330,11 +338,14 @@ def desired_time(idea: dict, activities: list[dict], trip: dict, days: dict) -> 
             if s.get("idea_title") == title and fits(d["date"], s.get("start_time", "")):
                 return f"{d['date'][5:].replace('-', '/')} {s.get('start_time', '')}（建議行程）"
     window = FLEX_WINDOW.get(idea.get("category"), FLEX_WINDOW["landmark"] if idea.get("needs_ticket") else FLEX_WINDOW["restaurant"])
+    # With a day-by-day plan, a place left off it is a fallback. Booking every
+    # one outright filled the same Madrid lunch three times over.
+    spare = SPARE if trip.get("suggested_plan") else ""
     area = idea.get("area", "")
     there = days_in(area, days) if hotel_city(area, days) else []
     if there:
-        return f"彈性：在 {area} 的日子（{'、'.join(d[5:].replace('-', '/') for d in there)}）{window}"
-    return f"彈性：下面「可以的時間」內任一天 {window}"
+        return f"彈性：在 {area} 的日子（{'、'.join(d[5:].replace('-', '/') for d in there)}）{window}{spare}"
+    return f"彈性：下面「可以的時間」內任一天 {window}{spare}"
 
 
 def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activities: list[dict],
@@ -388,6 +399,7 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
 - 不需要綁信用卡、也不需要預付的：請直接用 Jay Huang 的名義訂下最符合的時段。
 - 需要綁卡／預付，或只能打電話訂的：不要訂，回報旅程期間可以訂的時段。
 - 不收訂位、只能現場排隊的：註明 WALK_IN。
+- 標「備選」的不在每日行程裡：不管要不要綁卡都先不要訂，只回報 AVAILABLE／NEEDS_CARD 和可訂時段。
 - 標「門票／預約」的是景點或活動，不是餐廳：一律要付款，所以不要購買，回報 NEEDS_CARD、可以預約的時段，備註附上官方購票連結和票價。現場就能買票、不必先訂的回報 WALK_IN。
 {resize_rule}{move_rule}
 這次請處理的店與門票（目前全部還沒訂到）：
@@ -903,8 +915,13 @@ Muse 的信：
     return [p for p in json.loads(res.text or "{}").get("places", []) if str(p.get("name") or "").strip()]
 
 
+def fold(s: str) -> str:
+    """Drop accents, so "Sagrada Família" and "Basilica of the Sagrada Familia" can match."""
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
 def same_place(a: str, b: str) -> bool:
-    a, b = norm_name(a), norm_name(b)
+    a, b = norm_name(fold(a)), norm_name(fold(b))
     return bool(a and b) and (a == b or (min(len(a), len(b)) >= 4 and (a in b or b in a)))
 
 
@@ -1024,6 +1041,171 @@ def import_muse_updates(db, gmail, me: str, today: str, dry: bool) -> None:
         state_ref.set({"processed": sorted(processed)[-1000:], "updated_at": now_iso()})
 
 
+# ── Google Maps list (shared list -> stash) ──────────────────────────────────
+# A list link as shared, and the data= form a maps.app.goo.gl short link ends up at.
+LIST_RE = re.compile(r"placelists/list/([\w-]+)|!11m\d+!2s([\w-]+)")
+LIST_API = ("https://www.google.com/maps/preview/entitylist/getlist?authuser=0&hl=en&gl=us"
+            "&pb=!1m4!1s{id}!2e1!3m1!1e1!2e2!3e2!4i500!16b1")
+BROWSER = {"User-Agent": "Mozilla/5.0"}
+LIST_KINDS = ("restaurant", "cafe", "bar", "landmark", "shopping", "other", "skip")
+
+
+def maps_list_id(url: str) -> str | None:
+    """The list id in a long link, or in where a maps.app.goo.gl short link redirects to."""
+    m = LIST_RE.search(unquote(url))
+    if not m:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=BROWSER), timeout=20) as r:
+            m = LIST_RE.search(unquote(r.geturl()))
+    return (m.group(1) or m.group(2)) if m else None
+
+
+def fetch_maps_list(list_id: str) -> tuple[str, list[dict]]:
+    """
+    Title and places of a Google Maps list shared by link.
+
+    Google has no API for saved lists; this is the endpoint the Maps web app
+    loads a shared list from. It needs no sign-in and answers JSON behind the
+    usual )]}' prefix. The positions below are what it returned in 2026-10; a
+    place that no longer fits them is skipped rather than guessed at.
+    """
+    req = urllib.request.Request(LIST_API.format(id=list_id), headers=BROWSER)
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = json.loads(r.read().decode("utf-8").split("\n", 1)[1])[0]
+    places = []
+    for it in data[8] or []:
+        try:
+            cid = int(it[1][6][1]) % (1 << 64)  # signed in the payload, unsigned in ?cid=
+            places.append({
+                "key": str(cid), "name": str(it[2]).strip(), "address": it[1][4] or "", "note": it[3] or "",
+                "maps_url": f"https://maps.google.com/?cid={cid}",
+                "by": it[12][0] if len(it) > 12 and it[12] else "",
+            })
+        except (IndexError, TypeError, ValueError):
+            continue
+    return str(data[4] or ""), [p for p in places if p["name"]]
+
+
+def classify_list_places(places: list[dict], ideas: dict[str, dict], trip: dict) -> list[dict]:
+    """One Gemini call for a batch of new list places: kind, city, ticket, and any stash duplicate."""
+    titles = sorted({d.get("title", "") for d in ideas.values()} - {""})
+    areas = sorted({d.get("area", "") for d in ideas.values()} - {""})
+    listing = "\n".join(f"#{n} {p['name']}｜{p['address']}｜{p['note']}" for n, p in enumerate(places, 1))
+    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
+    prompt = f"""以下是 Jay 的 Google Maps 清單裡新加的地點，行程是 {trip.get('name')}（{trip.get('country')}），{trip['start_date']} ~ {trip['end_date']}。
+每個編號都要回一筆，skip 的也要回（ref 填 # 後面的編號）：
+- kind：restaurant / cafe / bar / landmark / shopping / other；甜點、冰淇淋、麵包店算 cafe。
+  整個城市、地區、國家的圖釘（例如只寫 "Porto"、"Seville"），或飯店住宿本身，填 skip。
+- area：所在城市，用英文常見寫法；收藏區已經用過的寫法優先：{'、'.join(areas) or '（無）'}
+- needs_ticket：景點要事先買票或預約入場時段才進得去（例如 Sagrada Família、Alhambra、Casa Milà）填 true；免費、現場買就好、或餐廳咖啡廳都填 false。
+- same_as：如果和收藏區已有的某個地點是同一個地方（包含它的入口、售票處、寫法不同），填那個地點的名稱，一字不差；否則空字串。
+
+收藏區已有的地點：
+{chr(10).join('- ' + t for t in titles) or '（無）'}
+
+新地點：
+{listing}"""
+    res = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=gtypes.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema={
+                "type": "OBJECT",
+                "properties": {"places": {"type": "ARRAY", "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "ref": {"type": "NUMBER"}, "kind": {"type": "STRING"}, "area": {"type": "STRING"},
+                        "needs_ticket": {"type": "BOOLEAN"}, "same_as": {"type": "STRING"},
+                    },
+                    "required": ["ref", "kind", "area", "needs_ticket", "same_as"],
+                }}},
+                "required": ["places"],
+            },
+        ),
+    )
+    by_ref = {int(v.get("ref", 0)): v for v in json.loads(res.text or "{}").get("places", [])}
+    # A pin with no street number is a whole city or country ("Porto | Portugal").
+    # Gemini tends to leave those out rather than answer skip.
+    return [by_ref.get(n) or {"kind": "other" if re.search(r"\d", p["address"]) else "skip"}
+            for n, p in enumerate(places, 1)]
+
+
+def add_list_place(db, child_id: str, p: dict, v: dict, ideas: dict[str, dict], dry: bool) -> str:
+    kind = v.get("kind") if v.get("kind") in LIST_KINDS else "other"
+    if kind == "skip":
+        return f"{p['name']}: skipped (city or hotel)"
+    same_as = str(v.get("same_as") or "").strip()
+    hit = next((i for i, d in ideas.items()
+                if same_place(d.get("title", ""), p["name"]) or (same_as and d.get("title") == same_as)), None)
+    if hit:
+        d, patch = ideas[hit], {}
+        if "/maps/search/" in (d.get("map_url") or "/maps/search/"):
+            patch["map_url"] = p["maps_url"]
+        if v.get("area") and not d.get("area"):
+            patch["area"] = v["area"]
+        if p["note"] and not d.get("note"):
+            patch["note"] = p["note"]
+        if v.get("needs_ticket") and not d.get("needs_ticket") and d.get("category") not in FOOD:
+            patch["needs_ticket"] = True
+        if patch and not dry:
+            db.collection("ideas").document(hit).update(patch)
+        d.update(patch)
+        return f"{p['name']}: already stashed as {d['title']}" + (f", updated {', '.join(patch)}" if patch else "")
+
+    idea = {
+        "trip_id": child_id, "title": p["name"], "category": kind, "area": str(v.get("area") or ""),
+        "note": p["note"], "duration": "", "map_url": p["maps_url"], "source": p["maps_url"],
+        "created_by": p["by"] or "Google Maps", "created_at": now_iso(), "status": "idea",
+        **({"needs_ticket": True} if v.get("needs_ticket") and kind not in FOOD else {}),
+    }
+    if not dry:
+        ref = db.collection("ideas").document()
+        ref.set(idea)
+        ideas[ref.id] = idea
+    return f"{p['name']}: added ({kind}{', ticket' if idea.get('needs_ticket') else ''}, {idea['area']})"
+
+
+def import_maps_lists(db, today: str, dry: bool) -> None:
+    """
+    Every trip with a Google Maps list linked in the app: places added to the
+    list since the last run become stash ideas, and the trip loop below emails
+    Muse about the bookable ones in the same run.
+
+    A place is remembered by its Maps id once seen, so deleting its idea in
+    the app is final; it is not re-added on the next run.
+    """
+    for ref in db.collection("trips").stream():
+        trip = ref.to_dict()
+        ml = trip.get("maps_list") or {}
+        if not ml.get("url") or (trip.get("end_date") or "") < today:
+            continue
+        print(f"maps list for {trip.get('name')}")
+        try:
+            list_id = ml.get("id") or maps_list_id(ml["url"])
+            if not list_id:
+                raise ValueError("not a Google Maps list link")
+            title, places = fetch_maps_list(list_id)
+        except Exception as e:
+            print(f"  ERROR: {e!r}")
+            if not dry:
+                ref.reference.update({"maps_list.error": str(e)[:200], "maps_list.synced_at": now_iso()})
+            continue
+        seen = set(ml.get("seen") or [])
+        new = [p for p in places if p["key"] not in seen]
+        if new:
+            child_id = trip.get("id") or ref.id
+            ideas = {d.id: d.to_dict() for d in db.collection("ideas").where("trip_id", "==", child_id).stream()}
+            for p, v in zip(new, classify_list_places(new, ideas, trip)):
+                print(f"  {add_list_place(db, child_id, p, v, ideas, dry)}")
+        # Field paths, so a link changed in the app meanwhile is not overwritten.
+        if not dry:
+            ref.reference.update({
+                "maps_list.id": list_id, "maps_list.title": title, "maps_list.count": len(places),
+                "maps_list.seen": sorted(seen | {p["key"] for p in places}),
+                "maps_list.synced_at": now_iso(), "maps_list.error": firestore.DELETE_FIELD,
+            })
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -1045,6 +1227,10 @@ def main() -> None:
                 import_muse_updates(db, gmail, me, today, args.dry_run)
         except Exception as e:
             print(f"muse updates ERROR: {e!r}")
+    try:
+        import_maps_lists(db, today, args.dry_run)
+    except Exception as e:
+        print(f"maps lists ERROR: {e!r}")
     for ref in db.collection("trips").stream():
         trip = ref.to_dict()
         if not trip.get("reservations_enabled"):
