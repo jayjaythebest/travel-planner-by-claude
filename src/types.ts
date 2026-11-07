@@ -249,6 +249,8 @@ export interface Reservation {
   /** "YYYY-MM-DD HH:MM" — the booked time, or the times that can be booked. */
   slots?: string[];
   confirmation?: string;
+  /** Muse's booking page (Tock, Resy, the restaurant's own) for a place left to the traveller to finish. */
+  booking_url?: string;
   /** Chinese; `note_en` is the same sentence in English, picked by UI language. */
   note?: string;
   note_en?: string;

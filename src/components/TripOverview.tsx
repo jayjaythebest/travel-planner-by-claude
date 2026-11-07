@@ -16,6 +16,7 @@ import {
   X as XIcon,
   KeyRound,
   Luggage,
+  ExternalLink,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
@@ -161,6 +162,10 @@ const RES_META: Record<Reservation['status'], { label: string; chip: string }> =
   unavailable: { label: '訂不到', chip: 'bg-red-100/80 text-red-800' },
   walk_in: { label: '現場排隊', chip: 'bg-violet-100/80 text-violet-800' },
 };
+/** Muse's booking page; replies parsed before the field existed may only carry it in the note. */
+const bookingUrl = (r: Reservation): string | undefined =>
+  r.booking_url || (r.note || r.note_en || '').match(/https?:\/\/[^\s)）」，,]+/)?.[0];
+
 const RES_ORDER: Reservation['status'][] = ['booked', 'available', 'needs_card', 'walk_in', 'unavailable', 'requested'];
 
 const fmtSlot = (s: string) => {
@@ -352,6 +357,11 @@ function Reservations({
                     })()}
                     {r.status !== 'booked' && (
                       <div className="pl-6 mt-2 flex gap-3">
+                        {bookingUrl(r) && (
+                          <a href={bookingUrl(r)} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-zinc-900 hover:underline">
+                            <span className="flex items-center gap-1"><ExternalLink size={11} />{t(r.status === 'needs_card' ? '前往訂位（補卡）' : '前往訂位')}</span>
+                          </a>
+                        )}
                         <button onClick={() => mark(i, 'booked')} className="text-[10px] font-bold text-emerald-600 hover:underline">
                           <span className="flex items-center gap-1"><Check size={11} />{t('標記已訂')}</span>
                         </button>

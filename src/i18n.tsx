@@ -415,6 +415,8 @@ const EN: Record<string, string> = {
   '取消連結': 'Unlink',
   '還沒開啟。開啟後每 10 分鐘檢查一次，有新的店就寄信給 Muse。': 'Off. Once on, new places are emailed to Muse within 10 minutes.',
   '確認碼：{code}': 'Confirmation: {code}',
+  '前往訂位（補卡）': 'Book (add card)',
+  '前往訂位': 'Book',
   '已訂房': 'Booked',
   '在 {country}，不在這趟旅程的國家': 'In {country}, not this trip’s country',
   '貼上 Google Maps 連結（可以一次貼很多個），或部落格、網站、朋友傳來的文字，AI 會挑出裡面提到的地點…': 'Paste Google Maps links (as many as you like), or text from a blog, website or a friend, and AI will pick out the places…',

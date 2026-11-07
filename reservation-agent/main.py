@@ -504,7 +504,8 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
 
 規則：
 - 不需要綁信用卡、也不需要預付的：請直接用 Jay Huang 的名義訂下最符合的時段。
-- 需要綁卡／預付，或只能打電話訂的：不要訂，回報旅程期間可以訂的時段。
+- 需要綁卡／預付，或只能打電話訂的：不要訂，回報旅程期間可以訂的時段，並附上訂位網址（Tock／Resy／OpenTable／官網的訂位頁，我會自己去補卡；只能打電話的附電話）。
+- 回報 AVAILABLE 或 NEEDS_CARD 的，備註一律附訂位網址。
 - 不收訂位、只能現場排隊的：註明 WALK_IN。
 - 標「備選」的不在每日行程裡：不管要不要綁卡都先不要訂，只回報 AVAILABLE／NEEDS_CARD 和可訂時段。
 - 標「門票／預約」的是景點或活動，不是餐廳：一律要付款，所以不要購買，回報 NEEDS_CARD、可以預約的時段，備註附上官方購票連結和票價。現場就能買票、不必先訂的回報 WALK_IN。
@@ -518,13 +519,13 @@ def build_request(trip: dict, trip_id: str, ideas: list[tuple[str, dict]], activ
 狀態只用這五種：
 BOOKED       已訂好。時間填訂到的日期時間，備註填確認碼。
 AVAILABLE    可以訂但沒訂（不在規則內或想先確認）。時間填可訂時段，多個用逗號分開。
-NEEDS_CARD   要綁卡或預付所以沒訂。時間填可訂時段。
+NEEDS_CARD   要綁卡或預付所以沒訂。時間填可訂時段，備註附訂位網址。
 UNAVAILABLE  旅程期間都訂不到。
 WALK_IN      不收訂位。
 
 例：
 #1 | BOOKED | 11/25 13:30 | 確認碼 ABC123
-#2 | NEEDS_CARD | 11/26 19:00, 11/26 21:30 | Tock 要先付訂金
+#2 | NEEDS_CARD | 11/26 19:00, 11/26 21:30 | Tock 要先付訂金 https://www.exploretock.com/...
 
 （{REQ_HEADER} 會由 Travel Planner 讀回來，請不要改標題裡的 {trip_key(trip_id)}。）
 """
@@ -570,7 +571,8 @@ def parse_reply(text: str, refs: dict, ideas: dict[str, dict], trip: dict) -> li
 - status 只能是 booked / available / needs_card / unavailable / walk_in。
 - slots 是可訂或已訂的時段，每個寫成 "YYYY-MM-DD HH:MM"，沒有就空陣列。旅程是 {trip["start_date"]} 到 {trip["end_date"]}；回覆裡只寫月/日時，年份一律用落在這段期間的那一年。
 - confirmation 是確認碼，沒有就空字串。
-- note 用一句話保留其他重要資訊（訂金、人數限制、要電話訂之類），沒有就空字串。同一句話要給兩個版本：note 用繁體中文，note_en 用英文；店名、金額、email、電話照原文。
+- booking_url 是 Muse 附的訂位／購票網址（Tock、Resy、OpenTable、官網訂位頁…），照原文完整抄下，沒有就空字串。不要自己編網址。
+- note 用一句話保留其他重要資訊（訂金、人數限制、要電話訂之類），沒有就空字串。同一句話要給兩個版本：note 用繁體中文，note_en 用英文；店名、金額、email、電話照原文。網址放 booking_url，不要放進 note。
 
 Muse 的回覆：
 \"\"\"
@@ -593,6 +595,7 @@ Muse 的回覆：
                                 "status": {"type": "STRING"},
                                 "slots": {"type": "ARRAY", "items": {"type": "STRING"}},
                                 "confirmation": {"type": "STRING"},
+                                "booking_url": {"type": "STRING"},
                                 "note": {"type": "STRING"},
                                 "note_en": {"type": "STRING"},
                             },
@@ -612,8 +615,13 @@ Muse 的回覆：
             out.append({"idea_id": idea_id, "status": status,
                         "slots": [in_trip_year(str(x), trip) for x in (r.get("slots") or [])],
                         "confirmation": r.get("confirmation") or "", "note": r.get("note") or "",
-                        "note_en": r.get("note_en") or ""})
+                        "note_en": r.get("note_en") or "", "booking_url": web_url(r.get("booking_url"))})
     return out
+
+
+def web_url(s) -> str:
+    s = str(s or "").strip()
+    return s if re.match(r"^https?://\S+$", s) else ""
 
 
 # ── Per trip ─────────────────────────────────────────────────────────────────
@@ -656,6 +664,8 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
                 "status": r["status"], "slots": r["slots"], "confirmation": r["confirmation"],
                 "note": r["note"], "note_en": r["note_en"], "updated_at": now_iso(),
             }
+            if r["booking_url"]:
+                res["booking_url"] = r["booking_url"]
             print(f"    {food[r['idea_id']]['title']}: {r['status']} {r['slots']} {r['confirmation']}")
             if not dry:
                 db.collection("ideas").document(r["idea_id"]).update({"reservation": res})
@@ -700,6 +710,12 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
                  and d["reservation"].get("slots")
                  and not slot_in_city(d.get("area", ""), d["reservation"]["slots"][0], days)}
     moves = {i for i, slot in misplaced.items() if asked.get(i) != slot}
+    # Needs a card (or is only reported) but came back without a booking link,
+    # which the traveller needs to finish it themselves. Asked once per place.
+    link_asked = set(state.get("link_asked") or [])
+    no_link = {i for i, d in food.items() if i not in manual and i not in link_asked
+               and (d.get("reservation") or {}).get("status") in ("available", "needs_card")
+               and not d["reservation"].get("booking_url")}
     # Hotels and the legs between cities are part of the signature: a booked or
     # changed stay or train moves the hours the travellers are in each city.
     sig = windows_sig({"windows": windows, "stays": sorted(
@@ -719,7 +735,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
     if state.get("party_size") is None:
         state["party_size"] = people
     resize = (int(state["party_size"]), people) if state.get("last_request_at") and state["party_size"] != people else None
-    if never_sent or moved or resize or moves:
+    if never_sent or moved or resize or moves or no_link:
         open_ideas = sorted(
             # Booked is done (unless the headcount changed) and walk-in cannot
             # be booked: neither is otherwise worth asking about again.
@@ -729,7 +745,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
             key=lambda x: x[1].get("created_at", ""),
         )
         subject, body, refs = build_request(trip, trip_id, open_ideas, acts, resize, accs, plan, set(misplaced))
-        print(f"  sending request: {len(open_ideas)} places ({len(never_sent)} new, {len(misplaced)} to move)")
+        print(f"  sending request: {len(open_ideas)} places ({len(never_sent)} new, {len(misplaced)} to move, {len(no_link)} missing a link)")
         if dry:
             print(subject)
             print(body)
@@ -752,7 +768,7 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
             processed.add(sent["id"])
             state.update(thread_id=sent["threadId"], last_message_id=header(full, "Message-ID"),
                          last_request_at=now_iso(), refs=refs, windows_sig=sig, party_size=people,
-                         move_asked={**asked, **misplaced})
+                         move_asked={**asked, **misplaced}, link_asked=sorted(link_asked | no_link))
             stamp = now_iso()
             for i, d in open_ideas:
                 prev = d.get("reservation") or {}
@@ -993,7 +1009,8 @@ Jay 目前的行程（編號、名稱、國家、日期、住宿）：
 - slots：已訂或可訂時段，每個 "YYYY-MM-DD HH:MM"；只寫月/日時，年份用落在該行程期間的那一年
 - confirmation：確認碼，沒有就空字串
 - why：一句話，為什麼值得去（Muse 有寫才填，繁體中文），沒有就空字串
-- note、note_en：訂位相關的備註（訂金、人數、要打電話…），繁中與英文各一，沒有就空字串
+- booking_url：Muse 附的訂位／購票網址（Tock、Resy、OpenTable、官網訂位頁…），照原文完整抄下，沒有就空字串；不要放 Google Maps 連結
+- note、note_en：訂位相關的備註（訂金、人數、要打電話…），繁中與英文各一，沒有就空字串；網址放 booking_url 不要放這裡
 
 Muse 的信：
 \"\"\"
@@ -1013,6 +1030,7 @@ Muse 的信：
                         "maps_url": {"type": "STRING"}, "trip": {"type": "NUMBER"}, "status": {"type": "STRING"},
                         "slots": {"type": "ARRAY", "items": {"type": "STRING"}}, "confirmation": {"type": "STRING"},
                         "why": {"type": "STRING"}, "note": {"type": "STRING"}, "note_en": {"type": "STRING"},
+                        "booking_url": {"type": "STRING"},
                     },
                     "required": ["name", "trip"],
                 }}},
@@ -1043,6 +1061,8 @@ def upsert_muse_place(db, child_id: str, trip: dict, p: dict, ideas: dict[str, d
         res = {"status": status, "slots": [in_trip_year(str(x), trip) for x in (p.get("slots") or [])],
                "confirmation": p.get("confirmation") or "", "note": p.get("note") or "",
                "note_en": p.get("note_en") or "", "updated_at": stamp}
+        if web_url(p.get("booking_url")):
+            res["booking_url"] = web_url(p.get("booking_url"))
 
     hit = next((i for i, d in ideas.items() if same_place(d.get("title", ""), p["name"])), None)
     if hit:
