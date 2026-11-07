@@ -64,6 +64,14 @@ def handled(idea: dict) -> bool:
     flagged `needs_ticket` (timed entry, a balloon flight) in the app."""
     return idea.get("category") in FOOD or bool(idea.get("needs_ticket"))
 STATUSES = ("booked", "available", "needs_card", "unavailable", "walk_in")
+
+
+def gemini() -> genai.Client:
+    # JSON mode exists only on v1beta; a newer SDK defaulting to v1 broke every call.
+    return genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip(),
+                        http_options=gtypes.HttpOptions(api_version="v1beta"))
+
+
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -558,9 +566,77 @@ def in_trip_year(slot: str, trip: dict) -> str:
     return best.isoformat() + rest
 
 
+# Muse answers in the `#n | STATUS | time | note` rows the request asks for
+# (sometimes `#n Name | ...`), so those are read directly. Gemini is the
+# fallback for anything else, and the plain read is the fallback when Gemini
+# is down: either one alone keeps replies flowing.
+ROW_RE = re.compile(r"^\s*#\s*(\d+)\s*([^|｜]*?)\s*[|｜]\s*([A-Za-z_ ]+?)\s*[|｜]\s*([^|｜]*?)\s*(?:[|｜]\s*(.*?))?\s*$")
+SLOT_RE = re.compile(r"(?:(\d{4})[-/])?(\d{1,2})[/-](\d{1,2})\s*(\d{1,2}):(\d{2})")
+URL_RE = re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&*+=%]+(?<![.:!?])")
+CONF_RE = re.compile(r"(?:確認碼|confirmation(?:\s*(?:code|number|no\.?|#))?)\s*[:：#]?\s*([A-Za-z0-9][A-Za-z0-9-]{3,})", re.I)
+
+
+def plain_slots(s: str, trip: dict) -> list[str]:
+    out = []
+    for m in SLOT_RE.finditer(s or ""):
+        slot = f"{m.group(1) or trip['start_date'][:4]}-{int(m.group(2)):02d}-{int(m.group(3)):02d} {int(m.group(4)):02d}:{m.group(5)}"
+        out.append(slot if m.group(1) else in_trip_year(slot, trip))
+    return out
+
+
+def plain_status(s: str) -> str:
+    return re.sub(r"[\s-]+", "_", (s or "").strip().lower())
+
+
+def parse_reply_plain(text: str, refs: dict, ideas: dict[str, dict], trip: dict) -> tuple[list[dict], int]:
+    """Rows in the requested form, and how many `#n` lines could not be read that way."""
+    out, unread = [], 0
+    for line in text.splitlines():
+        m = ROW_RE.match(line)
+        if not m:
+            unread += bool(re.match(r"^\s*#\s*\d+\s", line))
+            continue
+        n, name, status, when, note = m.groups()
+        status, note = plain_status(status), (note or "").strip()
+        if status not in STATUSES:  # CANCELLED and the like: nothing the app tracks
+            continue
+        idea_id = refs.get(n)
+        if name and not (idea_id in ideas and same_place(ideas[idea_id].get("title", ""), name)):
+            # Muse numbered it from an older request: go by the exact name only
+            # ("Panadería Rosetta" also contains "Rosetta"); anything looser is Gemini's job.
+            idea_id = next((i for i in refs.values() if i in ideas
+                            and norm_name(fold(ideas[i].get("title", ""))) == norm_name(fold(name))), None)
+        if not idea_id or idea_id not in ideas:
+            unread += 1
+            continue
+        conf = CONF_RE.search(note)
+        url = URL_RE.search(note)
+        out.append({"idea_id": idea_id, "status": status, "slots": plain_slots(when, trip),
+                    "confirmation": conf.group(1) if conf else "", "note": note, "note_en": "",
+                    "booking_url": url.group(0) if url else ""})
+    return out, unread
+
+
 def parse_reply(text: str, refs: dict, ideas: dict[str, dict], trip: dict) -> list[dict]:
-    listing = "\n".join(f"#{n} {ideas[i]['title']}" for n, i in refs.items() if i in ideas)
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
+    plain, unread = parse_reply_plain(text, refs, ideas, trip)
+    if plain and not unread:
+        return plain
+    try:
+        ai = parse_reply_gemini(text, refs, ideas, trip)
+    except Exception as e:
+        if not plain:
+            raise
+        print(f"  Gemini failed ({e!r}); using {len(plain)} plain rows")
+        return plain
+    merged = {r["idea_id"]: r for r in ai}
+    for r in plain:  # read verbatim, so it outranks Gemini's reading; keep Gemini's English note
+        merged[r["idea_id"]] = {**r, "note_en": merged.get(r["idea_id"], {}).get("note_en", "")}
+    return list(merged.values())
+
+
+def parse_reply_gemini(text: str, refs: dict, ideas: dict[str, dict], trip: dict) -> list[dict]:
+    listing ="\n".join(f"#{n} {ideas[i]['title']}" for n, i in refs.items() if i in ideas)
+    client = gemini()
     prompt = f"""以下是訂位助理 Muse 回覆的訂位結果。請把每家店的結果整理出來。
 
 這次請求的店（編號 → 名稱）：
@@ -652,7 +728,12 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
         text = strip_quoted(plain_text(msg["payload"]))
         if not text:
             continue
-        results = parse_reply(text, state.get("refs") or {}, food, trip)
+        try:
+            results = parse_reply(text, state.get("refs") or {}, food, trip)
+        except Exception as e:  # unreadable either way: leave it for the next run
+            processed.discard(mid)
+            print(f"  reply {mid}: ERROR {e!r}")
+            continue
         print(f"  reply {mid}: {len(results)} results")
         for r in results:
             # Marked by hand in the app (booked it themselves, or gave up):
@@ -796,7 +877,7 @@ def parse_hotel_email(subject: str, sender: str, text: str) -> dict | None:
     """One Gemini call per email: a hotel stay with its dates, or None for anything else."""
     text = re.sub(r"\[\]\(https?://[^)]*\)|https?://\S+", "", text)
     text = re.sub(r"[|\s]*\n[|\s]*\n+", "\n", text)
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
+    client = gemini()
     prompt = f"""判斷這封信是不是「住宿」的訂房確認、訂房變更或取消通知（飯店、民宿、Airbnb、Booking.com 等）。
 餐廳訂位、機票、租車、行銷信、點數通知、入住前提醒以外的一般廣告都算 other。
 
@@ -991,9 +1072,84 @@ UPDATE_STATE = ("agent_state", "muse_updates")
 IDEA_CATEGORIES = ("restaurant", "cafe", "bar", "landmark", "shopping", "other")
 
 
-def parse_muse_update(text: str, trip_list: str) -> list[dict]:
+UPDATE_FIELDS = {"城市／國家": "area", "城市/國家": "area", "類別": "category", "Google Maps": "maps_url",
+                 "行程": "trip_hint", "推薦原因": "why", "訂位狀態": "status", "時間": "slots",
+                 "確認碼": "confirmation", "訂位網址": "booking_url", "備註": "note"}
+UPDATE_CATEGORIES = {"餐廳": "restaurant", "咖啡": "cafe", "酒吧": "bar", "景點": "landmark", "購物": "shopping", "其他": "other"}
+
+
+def pick_trip(p: dict, trips: list[tuple[str, dict, str]]) -> int:
+    """1-based trip for a place by Muse's 行程 line, then its dates, then its city; 0 unless exactly one fits."""
+    def one(hits: list[int]) -> int | None:
+        return hits[0] if len(hits) == 1 else None
+
+    hint = p.get("trip_hint", "")
+    if hint and "不確定" not in hint:
+        k = one([k for k, (_, t, _) in enumerate(trips, 1) if t.get("name") and t["name"] in hint])
+        if k:
+            return k
+    when = p.get("slots_raw", "")
+    if SLOT_RE.search(when):
+        k = one([k for k, (_, t, _) in enumerate(trips, 1)
+                 if all(t["start_date"] <= s[:10] <= t["end_date"] for s in plain_slots(when, t))])
+        if k:
+            return k
+    city = fold(p.get("area", "").split(",")[0]).strip().lower()
+    if city:
+        k = one([k for k, (_, t, stays) in enumerate(trips, 1)
+                 if city in fold(f"{t.get('name', '')} {t.get('country', '')} {stays}").lower()])
+        if k:
+            return k
+    return 0
+
+
+def parse_muse_update_plain(text: str, trips: list[tuple[str, dict, str]]) -> list[dict] | None:
+    """Places written in MUSE_PROMPT.md's `## Name` + `欄位：值` template; None when the email is not in it."""
+    blocks = re.split(r"^\s*##\s+", text, flags=re.M)[1:]
+    if not blocks:
+        return None
+    places = []
+    for b in blocks:
+        lines = b.strip().splitlines()
+        p = {"name": lines[0].strip()}
+        for line in lines[1:]:
+            m = re.match(r"^\s*([^:：]+?)\s*[:：]\s*(.*?)\s*(?:←.*)?$", line)
+            if m and m.group(1) in UPDATE_FIELDS:
+                p[UPDATE_FIELDS[m.group(1)]] = m.group(2)
+        if len(p) == 1:
+            return None
+        status = plain_status(p.get("status", ""))
+        if p.get("status") and status not in STATUSES and "沒查" not in p["status"]:
+            return None
+        p["status"] = status if status in STATUSES else "none"
+        p["category"] = next((v for k, v in UPDATE_CATEGORIES.items() if k in p.get("category", "")), "other")
+        p["area"] = p.get("area", "").split(",")[0].strip()
+        p["slots_raw"] = p.pop("slots", "")
+        p["trip"] = pick_trip(p, trips)
+        if p["trip"]:
+            p["slots"] = plain_slots(p["slots_raw"], trips[p["trip"] - 1][1])
+        p["booking_url"] = web_url(p.get("booking_url"))
+        p["note_en"] = ""
+        places.append(p)
+    return places
+
+
+def parse_muse_update(text: str, trip_list: str, trips: list[tuple[str, dict, str]]) -> list[dict]:
+    plain = parse_muse_update_plain(text, trips)
+    if plain and all(p["trip"] for p in plain):
+        return plain
+    try:
+        return parse_muse_update_gemini(text, trip_list)
+    except Exception as e:
+        if not plain:
+            raise
+        print(f"  Gemini failed ({e!r}); using {len(plain)} plain places")
+        return plain
+
+
+def parse_muse_update_gemini(text: str, trip_list: str) -> list[dict]:
     """Places in one [muse更新] email, each already assigned to a trip by number (0 = none fits)."""
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
+    client = gemini()
     prompt = f"""以下是訂位助理 Muse 寄來的地點更新：Jay 在 WhatsApp 丟給 Muse 的餐廳、景點，加上 Muse 查到的訂位結果。請整理成清單。
 
 Jay 目前的行程（編號、名稱、國家、日期、住宿）：
@@ -1117,11 +1273,12 @@ def import_muse_updates(db, gmail, me: str, today: str, dry: bool) -> None:
         return
 
     trips = my_trips(db, me, today)
-    lines = []
+    lines, with_stays = [], []
     for n, (cid, t) in enumerate(trips, 1):
         stays = "、".join(f"{a.get('name')}（{a.get('address') or '—'}）"
                          for a in (d.to_dict() for d in db.collection("accommodations").where("trip_id", "==", cid).stream()))
         lines.append(f"{n}. {t.get('name')}｜{t.get('country')}｜{t['start_date']} ~ {t['end_date']}｜住宿：{stays or '未登記'}")
+        with_stays.append((cid, t, stays))
     trip_list = "\n".join(lines) or "（沒有進行中的行程）"
     stash: dict[str, dict[str, dict]] = {}
 
@@ -1133,7 +1290,12 @@ def import_muse_updates(db, gmail, me: str, today: str, dry: bool) -> None:
         text = strip_quoted(plain_text(msg["payload"]))
         if not text:
             continue
-        places = parse_muse_update(text, trip_list)
+        try:
+            places = parse_muse_update(text, trip_list, with_stays)
+        except Exception as e:  # unreadable either way: leave it for the next run
+            processed.discard(mid)
+            print(f"  muse update {mid}: ERROR {e!r}")
+            continue
         print(f"  muse update {mid}: {len(places)} places")
         unmatched = []
         for p in places:
@@ -1218,7 +1380,7 @@ def classify_list_places(places: list[dict], ideas: dict[str, dict], trip: dict)
     titles = sorted({d.get("title", "") for d in ideas.values()} - {""})
     areas = sorted({d.get("area", "") for d in ideas.values()} - {""})
     listing = "\n".join(f"#{n} {p['name']}｜{p['address']}｜{p['note']}" for n, p in enumerate(places, 1))
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"].lstrip(chr(0xFEFF)).strip())
+    client = gemini()
     prompt = f"""以下是 Jay 的 Google Maps 清單裡新加的地點，行程是 {trip.get('name')}（{trip.get('country')}），{trip['start_date']} ~ {trip['end_date']}。
 每個編號都要回一筆，skip 的也要回（ref 填 # 後面的編號）：
 - kind：restaurant / cafe / bar / landmark / shopping / other；甜點、冰淇淋、麵包店算 cafe。
