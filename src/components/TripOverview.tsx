@@ -159,9 +159,15 @@ const RES_META: Record<Reservation['status'], { label: string; chip: string }> =
   booked: { label: '已訂位', chip: 'bg-emerald-100/80 text-emerald-800' },
   available: { label: '可訂', chip: 'bg-sky-100/80 text-sky-800' },
   needs_card: { label: '需綁卡', chip: 'bg-amber-100/80 text-amber-800' },
-  unavailable: { label: '訂不到', chip: 'bg-red-100/80 text-red-800' },
+  unavailable: { label: '旅程期間沒有空位', chip: 'bg-red-100/80 text-red-800' },
   walk_in: { label: '現場排隊', chip: 'bg-violet-100/80 text-violet-800' },
 };
+/**
+ * Needs a card but Muse found no time to book within the trip: that is no
+ * table, whatever the card policy, so it reads (and sorts) as unavailable.
+ */
+const shownStatus = (r: Reservation): Reservation['status'] =>
+  r.status === 'needs_card' && !r.slots?.length ? 'unavailable' : r.status;
 /** Muse's booking page; replies parsed before the field existed may only carry it in the note. */
 const bookingUrl = (r: Reservation): string | undefined =>
   r.booking_url || (r.note || r.note_en || '').match(/https?:\/\/[^\s)）」，,]+/)?.[0];
@@ -223,7 +229,7 @@ function Reservations({
   if (food.length === 0 && stays.length === 0) return null;
   const rows = ideas
     .filter(isInReservations)
-    .sort((a, b) => RES_ORDER.indexOf(a.reservation!.status) - RES_ORDER.indexOf(b.reservation!.status));
+    .sort((a, b) => RES_ORDER.indexOf(shownStatus(a.reservation!)) - RES_ORDER.indexOf(shownStatus(b.reservation!)));
   const booked = rows.filter(i => i.reservation?.status === 'booked').length + stays.length;
   const thread = trip.reservation_thread;
   const when = (iso?: string) => (iso ? format(parseISO(iso), 'M/d HH:mm') : '—');
@@ -298,7 +304,7 @@ function Reservations({
             <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
               {rows.map(i => {
                 const r = i.reservation!;
-                const meta = RES_META[r.status];
+                const meta = RES_META[shownStatus(r)];
                 return (
                   <div key={i.id} className="p-3">
                     <div className="flex items-center gap-2">

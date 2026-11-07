@@ -392,6 +392,7 @@ const EN: Record<string, string> = {
   '可訂': 'Available',
   '需綁卡': 'Needs card',
   '訂不到': 'Unavailable',
+  '旅程期間沒有空位': 'No slots during this trip',
   '現場排隊': 'Walk-in',
   '等待寄出': 'Not sent yet',
   '目前沒有已訂或接洽中的訂位': 'Nothing booked or in progress yet',
