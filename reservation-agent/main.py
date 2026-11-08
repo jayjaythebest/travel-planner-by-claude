@@ -1056,6 +1056,243 @@ def import_hotels(db, gmail, me: str, today: str, dry: bool) -> None:
         state_ref.set(state)
 
 
+# ── Restaurant / ticket confirmations ────────────────────────────────────────
+BOOKING_QUERY = (
+    'newer_than:180d -subject:"muse定位串" -subject:"muse更新" '
+    "{subject:(reservation OR booking OR confirmation OR confirmed OR ticket OR tickets OR purchase "
+    "OR order OR cancellation OR cancelled OR entradas OR reserva OR 預約 OR 訂位 OR 門票 OR 予約) "
+    "from:(opentable.com OR exploretock.com OR tock.com OR resy.com OR sevenrooms.com OR covermanager.com "
+    "OR thefork.com OR tablecheck.com OR getyourguide.com OR viator.com OR klook.com OR kkday.com OR tiqets.com)}"
+)
+BOOKING_STATE = ("agent_state", "booking_mail")
+BOOKING_TYPES = ("restaurant", "cafe", "bar", "ticket", "tour")
+BOOKING_MINUTES = {"restaurant": 90, "cafe": 60, "bar": 120, "ticket": 120, "tour": 180}
+
+
+def parse_booking_email(subject: str, sender: str, text: str) -> dict | None:
+    """One Gemini call per email: a restaurant table or a timed ticket, or None for anything else."""
+    text = re.sub(r"\[\]\(https?://[^)]*\)|https?://\S+", "", text)
+    text = re.sub(r"[|\s]*\n[|\s]*\n+", "\n", text)
+    prompt = f"""判斷這封信是不是「餐廳／咖啡廳／酒吧訂位」或「景點、博物館、導覽、活動的門票或預約」的確認、變更或取消通知。
+住宿（飯店、民宿、Airbnb，任何有入住／退房的）、機票、火車、租車、行銷信、電子報、評價邀請、還沒完成的購物車都算 other。
+
+- kind：confirmation（新訂）／modification（同一筆改了時間或人數）／cancellation（取消）／other
+- type：restaurant / cafe / bar / ticket（景點、博物館門票）/ tour（導覽、行程、體驗）
+- name：店名或景點名，照原文（例如 "Sagrada Familia"、"Disfrutar"）
+- address：地址，沒有就空字串
+- date：YYYY-MM-DD，用信件內文寫的當地日期（23/12/2026 是 2026-12-23）
+- time：HH:MM 24 小時制，用內文寫的當地時間（入場時間、訂位時間）；不要換算時區
+- end_time：信裡有寫結束時間才填，否則空字串
+- party_size：人數或票數（例如 "2 x Under 30" 是 2），不知道填 0
+- confirmation：確認碼／訂單編號／locator，沒有就空字串
+
+寄件者：{sender}
+標題：{subject}
+內文：
+\"\"\"
+{text[:12000]}
+\"\"\""""
+    client = gemini()  # held: a client nobody references is closed mid-request
+    res = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=gtypes.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema={
+                "type": "OBJECT",
+                "properties": {k: {"type": "NUMBER" if k == "party_size" else "STRING"} for k in
+                               ("kind", "type", "name", "address", "date", "time", "end_time", "party_size", "confirmation")},
+                "required": ["kind"],
+            },
+        ),
+    )
+    r = json.loads(res.text or "{}")
+    if r.get("kind") not in HOTEL_KINDS or not r.get("name") or not re.match(r"^\d{4}-\d{2}-\d{2}$", str(r.get("date") or "")):
+        return None
+    out = {k: str(r.get(k) or "").strip() for k in ("kind", "type", "name", "address", "date", "time", "end_time", "confirmation")}
+    if out["type"] not in BOOKING_TYPES:
+        out["type"] = "ticket"
+    for k in ("time", "end_time"):
+        m = re.match(r"^(\d{1,2}):(\d{2})", out[k])
+        out[k] = f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
+    out["party_size"] = int(r.get("party_size") or 0)
+    return out
+
+
+def booking_activity_note(bs: list[dict], trip: dict) -> str:
+    """Every booking behind one activity: two people buying their tickets separately is one visit."""
+    codes = "、".join(b["confirmation"] for b in bs if b["confirmation"])
+    people = sum(b["party_size"] for b in bs)
+    want = party_size(trip)
+    parts = [f"確認碼：{codes}" if codes else "", f"{people} 人" if people else "",
+             f"⚠ 只訂了 {people} 人，行程是 {want} 人" if 0 < people < want else "", "（Gmail 自動匯入）"]
+    return " · ".join(p for p in parts if p)
+
+
+def add_minutes(hhmm: str, minutes: int) -> str:
+    h, m = map(int, hhmm.split(":"))
+    t = (h * 60 + m + minutes) % (24 * 60)
+    return f"{t // 60:02d}:{t % 60:02d}"
+
+
+def place_ticket(db, child_id: str, trip: dict, key: str, b: dict, live: dict[str, dict], dry: bool) -> str | None:
+    """
+    Write one booking onto the trip: its stash idea is marked booked (manual,
+    so Muse leaves it alone) and the itinerary gets an activity at that time.
+    Returns the activity's doc id; bookings sharing a place and day share one.
+    """
+    stays = [a.to_dict().get("name", "") for a in db.collection("accommodations").where("trip_id", "==", child_id).stream()]
+    if any(same_place(s, b["name"]) for s in stays):
+        print(f"    skipped {b['name']}: it is one of the trip's hotels")  # Gemini read a hotel email as a booking
+        return b.get("act_id")
+    acts = {d.id: d.to_dict() for d in db.collection("activities").where("trip_id", "==", child_id).stream()}
+    ideas = {d.id: d.to_dict() for d in db.collection("ideas").where("trip_id", "==", child_id).stream()}
+    idea_id = b.get("idea_id") if b.get("idea_id") in ideas else next(
+        (i for i, d in ideas.items() if same_place(d.get("title", ""), b["name"])), None)
+    act_id = b.get("act_id") if b.get("act_id") in acts else None
+    if act_id is None:
+        # Already in the plan: added from the stash, by a ticket bought
+        # separately for someone else, or typed in by hand.
+        act_id = next((i for i, a in acts.items() if a.get("date") == b["date"] and not a.get("is_flight")
+                       and ((idea_id and a.get("idea_id") == idea_id) or same_place(a.get("activity", ""), b["name"]))), None)
+
+    if b["kind"] == "cancellation":
+        others = [o for k, o in live.items() if act_id and k != key and o.get("act_id") == act_id and o["kind"] != "cancellation"]
+        print(f"    cancelled: {b['name']} {b['date']} #{b['confirmation']}")
+        if dry:
+            return None
+        if act_id and not others:
+            db.collection("activities").document(act_id).delete()
+        elif act_id:
+            db.collection("activities").document(act_id).update({"note": booking_activity_note(others, trip)})
+        prev = ideas[idea_id].get("reservation") or {} if idea_id else {}
+        # Only the booking this email cancels: Rosetta's 11/27 cancellation must
+        # not undo the 11/26 table booked after it.
+        theirs = (b["confirmation"] and b["confirmation"] in (prev.get("confirmation") or "")) \
+            or (prev.get("slots") or [""])[0][:10] == b["date"]
+        if idea_id and not others and theirs:
+            db.collection("ideas").document(idea_id).update({
+                "status": "idea", "scheduled_date": firestore.DELETE_FIELD,
+                "reservation": {**prev, "status": "unavailable", "manual": True, "slots": [],
+                                "note": "你已取消這筆訂位（取消信）", "note_en": "You cancelled this booking (cancellation email)",
+                                "updated_at": now_iso()}})
+        return None
+
+    together = [o for k, o in live.items() if k != key and o.get("act_id") and o.get("act_id") == act_id
+                and o["kind"] != "cancellation"] + [b]
+    start = b["time"] or (acts.get(act_id) or {}).get("start_time") or "10:00"
+    end = b["end_time"] or add_minutes(start, BOOKING_MINUTES[b["type"]])
+    name = ideas[idea_id]["title"] if idea_id else b["name"]
+    fields = {
+        "trip_id": child_id, "date": b["date"], "start_time": start, "end_time": end, "activity": name,
+        "note": booking_activity_note(together, trip), "source": "gmail",
+    }
+    if idea_id:
+        fields["idea_id"] = idea_id
+    mine = acts.get(act_id) or {}
+    if act_id and mine.get("source") != "gmail":
+        # Someone's own activity: keep their name, note and length; only move
+        # it to the booked time and add the code if the note lacks it.
+        fields = {"date": b["date"], "start_time": start}
+        if start != mine.get("start_time"):
+            fields["end_time"] = end
+        if b["confirmation"] and b["confirmation"] not in (mine.get("note") or ""):
+            fields["note"] = " · ".join(p for p in (mine.get("note"), f"確認碼：{b['confirmation']}") if p)
+    print(f"    {'updating' if act_id else 'adding'} {name} {b['date']} {start}–{end} #{b['confirmation']}"
+          + (f" (stash: {ideas[idea_id]['title']})" if idea_id else ""))
+    if dry:
+        return act_id
+    if act_id:
+        db.collection("activities").document(act_id).update(fields)
+    else:
+        address = b["address"]
+        ref = db.collection("activities").document()
+        ref.set({**fields, "id": ref.id, "is_flight": False, "travel_mode": "transit",
+                 "map_url": (ideas.get(idea_id) or {}).get("map_url") or "https://www.google.com/maps/search/?api=1&query="
+                 + quote(f"{b['name']} {address or trip.get('country', '')}", safe="")})
+        act_id = ref.id
+    if idea_id:
+        prev = ideas[idea_id].get("reservation") or {}
+        db.collection("ideas").document(idea_id).update({
+            "status": "scheduled", "scheduled_date": b["date"],
+            "reservation": {**prev, "status": "booked", "manual": True, "slots": [f"{b['date']} {start}"],
+                            "confirmation": "、".join(o["confirmation"] for o in together if o["confirmation"]),
+                            "requested_at": prev.get("requested_at") or now_iso(), "updated_at": now_iso()}})
+    b["idea_id"] = idea_id
+    return act_id
+
+
+def import_bookings(db, gmail, me: str, today: str, dry: bool) -> None:
+    """
+    Restaurant and ticket confirmation emails -> booked stash ideas and
+    itinerary activities, the way import_hotels does stays. Each booking is
+    written only when an email about it arrives, so an activity edited or
+    deleted in the app stays that way until the venue sends something new.
+    """
+    state_ref = db.collection(BOOKING_STATE[0]).document(BOOKING_STATE[1])
+    state = state_ref.get().to_dict() or {}
+    processed = set(state.get("processed") or [])
+    bookings: dict[str, dict] = dict(state.get("bookings") or {})
+
+    ids = []
+    req = gmail.users().messages().list(userId="me", q=BOOKING_QUERY, maxResults=100)
+    while req is not None and len(ids) < 500:
+        page = req.execute()
+        ids += [m["id"] for m in page.get("messages", [])]
+        req = gmail.users().messages().list_next(req, page)
+    for mid in [m for m in ids if m not in processed][:MAX_NEW_PER_RUN]:
+        msg = gmail.users().messages().get(userId="me", id=mid, format="full").execute()
+        processed.add(mid)
+        if header(msg, REQ_HEADER):
+            continue
+        b = parse_booking_email(header(msg, "Subject"), header(msg, "From"), plain_text(msg["payload"]))
+        if not b:
+            continue
+        # Venues send one booking twice (Tock: with and without the code), so
+        # an email without a code joins the booking of that place and day.
+        # Codes still keep apart two tickets bought separately for one visit.
+        spot = f"{norm_name(b['name'])}|{b['date']}"
+        same = [k for k, o in bookings.items() if f"{norm_name(o['name'])}|{o['date']}" == spot]
+        if b["confirmation"]:
+            key = b["confirmation"]
+            for k in [k for k in same if k != key and not bookings[k]["confirmation"]]:
+                bookings.setdefault(key, bookings[k] | {"confirmation": key, "dirty": True})
+                del bookings[k]
+        else:
+            key = same[0] if same else spot
+        prev = bookings.get(key) or {}
+        sent = int(msg.get("internalDate", 0))
+        if sent < int(prev.get("sent", 0)):
+            continue
+        b["confirmation"] = b["confirmation"] or prev.get("confirmation", "")
+        bookings[key] = {**b, "trip": prev.get("trip"), "act_id": prev.get("act_id"), "idea_id": prev.get("idea_id"),
+                         "dirty": True, "sent": sent}
+        print(f"  booking mail {mid}: {b['kind']} {b['type']} {b['name']} {b['date']} {b['time']} x{b['party_size']} #{b['confirmation']}")
+
+    trips = my_trips(db, me, today)
+    for key, b in sorted(bookings.items(), key=lambda kv: kv[1]["sent"]):
+        if not b.get("dirty") or b["date"] < today:
+            continue
+        hit = next(((cid, t) for cid, t in trips if t["start_date"] <= b["date"] <= t["end_date"]), None)
+        if hit is None:
+            continue  # no trip on that day yet: stays dirty, tried again once one exists
+        child_id, trip = hit
+        print(f"  → {trip.get('name')}")
+        if b.get("trip") and b["trip"] != child_id and b.get("act_id") and not dry:
+            db.collection("activities").document(b["act_id"]).delete()  # the date moved it to another trip
+            b["act_id"] = None
+        live = {k: o for k, o in bookings.items() if o.get("trip") == child_id}
+        b["act_id"] = place_ticket(db, child_id, trip, key, b, live, dry)
+        b.update(trip=child_id, dirty=False)
+
+    if not dry:
+        state_ref.set({
+            "processed": sorted(processed)[-3000:],
+            "bookings": {k: v for k, v in bookings.items() if v["date"] >= today},
+            "updated_at": now_iso(),
+        })
+
+
 def my_trips(db, me: str, today: str) -> list[tuple[str, dict]]:
     """(child id, trip) for every trip the mailbox owner is on that has not ended."""
     out = []
@@ -1512,6 +1749,12 @@ def main() -> None:
                 import_hotels(db, gmail, me, today, args.dry_run)
         except Exception as e:  # hotels must not stop the Muse relay
             print(f"hotels ERROR: {e!r}")
+        try:
+            # Before the Muse step, so a place booked by email is not sent to Muse to book again.
+            if me:
+                import_bookings(db, gmail, me, today, args.dry_run)
+        except Exception as e:
+            print(f"bookings ERROR: {e!r}")
         try:
             if me:
                 import_muse_updates(db, gmail, me, today, args.dry_run)
