@@ -863,13 +863,19 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
 
 
 # ── Hotel confirmations ──────────────────────────────────────────────────────
+# Hotels write again when a stay changes, under many subjects ("Your stay has
+# been updated", "Changes to your reservation", "canceled", pre-arrival
+# notes), so the net is wide; the Promotions tab is left out because "stay"
+# alone matches every loyalty-points mailing.
 HOTEL_QUERY = (
-    'newer_than:180d -subject:"muse定位串" '
-    "subject:(reservation OR booking OR confirmation OR confirmed OR cancellation OR cancelled "
-    "OR itinerary OR 預訂 OR 訂房 OR 確認 OR 取消)"
+    'newer_than:180d -subject:"muse定位串" -category:promotions '
+    "subject:(reservation OR booking OR confirmation OR confirmed OR cancellation OR cancelled OR canceled "
+    "OR itinerary OR update OR updated OR change OR changed OR changes OR modified OR modification "
+    "OR stay OR check-in OR arrival OR 預訂 OR 訂房 OR 確認 OR 取消 OR 變更 OR 更改 OR 修改 OR 入住)"
 )
 HOTEL_STATE = ("agent_state", "hotel_mail")
 HOTEL_KINDS = ("confirmation", "modification", "cancellation")
+STAY_FIELDS = ("name", "address", "check_in", "check_out")
 MAX_NEW_PER_RUN = 40  # first run over 180 days of mail must fit the 300 s task timeout
 
 
@@ -878,10 +884,10 @@ def parse_hotel_email(subject: str, sender: str, text: str) -> dict | None:
     text = re.sub(r"\[\]\(https?://[^)]*\)|https?://\S+", "", text)
     text = re.sub(r"[|\s]*\n[|\s]*\n+", "\n", text)
     client = gemini()
-    prompt = f"""判斷這封信是不是「住宿」的訂房確認、訂房變更或取消通知（飯店、民宿、Airbnb、Booking.com 等）。
-餐廳訂位、機票、租車、行銷信、點數通知、入住前提醒以外的一般廣告都算 other。
+    prompt = f"""判斷這封信是不是關於某一筆「住宿」訂房的信（飯店、民宿、Airbnb、Booking.com 等）：訂房確認、訂房變更、取消，或入住前提醒／行前資訊（信裡有這筆訂房的日期）。
+餐廳訂位、機票、租車、行銷信、點數通知、會員帳號通知、沒有特定訂房的一般廣告都算 other。
 
-- kind：confirmation（新訂房）／modification（同一筆訂房改了日期或房型）／cancellation（取消）／other
+- kind：confirmation（新訂房）／modification（同一筆訂房改了日期、房型或其他資訊；入住前提醒、行前資訊也填這個）／cancellation（取消）／other
 - name：飯店名稱，照原文
 - address：完整地址，沒有就空字串
 - check_in、check_out：YYYY-MM-DD，年份照信裡寫的
@@ -1025,11 +1031,25 @@ def import_hotels(db, gmail, me: str, today: str, dry: bool) -> None:
         if not b:
             continue
         key = booking_key(b)
+        if key not in bookings and not b["confirmation"]:
+            # An update that leaves out the number: the same hotel on overlapping nights is that stay.
+            key = next((k for k, o in bookings.items() if norm_name(o["name"]) == norm_name(b["name"])
+                        and o["check_in"] < b["check_out"] and b["check_in"] < o["check_out"]), key)
         prev = bookings.get(key) or {}
+        b["confirmation"] = b["confirmation"] or prev.get("confirmation", "")
         sent = int(msg.get("internalDate", 0))
         if sent < int(prev.get("sent", 0)):
             continue
-        bookings[key] = {**b, "trip": prev.get("trip"), "acc_id": prev.get("acc_id"), "dirty": True, "sent": sent}
+        # A reminder or a resent confirmation that changes nothing must not
+        # rewrite the stay over edits made in the app. A missing address is
+        # no change: pre-arrival notes often leave it out.
+        b["address"] = b["address"] or prev.get("address", "")
+        same = prev and prev.get("kind") != "cancellation" and b["kind"] != "cancellation" \
+            and all(b[f] == prev.get(f) for f in STAY_FIELDS)
+        bookings[key] = {**b, "trip": prev.get("trip"), "acc_id": prev.get("acc_id"),
+                         "dirty": prev.get("dirty", False) if same else True, "sent": sent}
+        if same:
+            continue
         print(f"  hotel mail {mid}: {b['kind']} {b['name']} {b['check_in']}→{b['check_out']} #{b['confirmation']}")
 
     trips = my_trips(db, me, today)
