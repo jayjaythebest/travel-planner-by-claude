@@ -16,14 +16,16 @@ import {
   X as XIcon,
   KeyRound,
   Luggage,
+  TrainFront,
   ExternalLink,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate, flagUrl, freeWindows, fitsWindow } from '../utils';
-import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation } from '../types';
+import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation, TransportPlan } from '../types';
 import { IdeaStash, isInReservations, isBookable, CATEGORY_META } from './IdeaStash';
-import { Section, useCollapsed } from './Section';
+import { Section, useCollapsed, useForceOpen, ForceOpen } from './Section';
+import { TransportPlanner, transportLegs } from './TransportPlanner';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { t, useLang, getLang } from '../i18n';
@@ -222,6 +224,7 @@ function Reservations({
     return activities.find(a => a.idea_id === i.id || (a.activity === i.title && a.date === date));
   };
   const [open, toggleOpen] = useCollapsed('reservations', true);
+  const forced = useForceOpen();
   const food = ideas.filter(isBookable);
   // Stays with a confirmation number are booked by definition — most arrive
   // from the hotel's own email via the reservation-agent.
@@ -253,7 +256,7 @@ function Reservations({
           onClick={toggleOpen}
           className="flex items-center gap-1.5 min-w-0 text-sm font-bold text-zinc-400 uppercase tracking-widest hover:text-zinc-600 transition-colors"
         >
-          <ChevronDown size={14} className={cn('flex-shrink-0 transition-transform', !open && '-rotate-90')} />
+          {!forced && <ChevronDown size={14} className={cn('flex-shrink-0 transition-transform', !open && '-rotate-90')} />}
           <span className="truncate">{t('訂位與門票')}</span>
           <span className="normal-case tracking-normal text-[11px] font-medium text-zinc-300 truncate">
             · {t('已訂 {n}／{total}', { n: booked, total: rows.length + stays.length })}
@@ -393,6 +396,33 @@ function Reservations({
   );
 }
 
+const OVERVIEW_TABS = ['bookings', 'transport', 'ideas', 'days', 'more'] as const;
+type OverviewTab = (typeof OVERVIEW_TABS)[number];
+const TAB_LABEL: Record<OverviewTab, string> = {
+  bookings: '訂位與門票',
+  transport: '交通',
+  ideas: '靈感暫存區',
+  days: '每日一覽',
+  more: '航班・住宿・支出',
+};
+
+/** The overview sub-tab last looked at, remembered per browser like the folded sections. */
+function useOverviewTab(): [OverviewTab, (t: OverviewTab) => void] {
+  const [tab, setTab] = useState<OverviewTab>(() => {
+    try {
+      const v = localStorage.getItem('tp.overview.tab') as OverviewTab | null;
+      return v && (OVERVIEW_TABS as readonly string[]).includes(v) ? v : 'bookings';
+    } catch {
+      return 'bookings';
+    }
+  });
+  const choose = (t: OverviewTab) => {
+    setTab(t);
+    try { localStorage.setItem('tp.overview.tab', t); } catch {}
+  };
+  return [tab, choose];
+}
+
 export function TripOverview({
   trip,
   dates,
@@ -413,6 +443,7 @@ export function TripOverview({
   onAddBookingToPlan,
   onSetPartySize,
   onSetMapsList,
+  onSaveTransportPlan,
 }: {
   trip: Trip;
   dates: string[];
@@ -433,8 +464,10 @@ export function TripOverview({
   onAddBookingToPlan: (idea: Idea) => Promise<void>;
   onSetPartySize: (n: number) => Promise<void>;
   onSetMapsList: (url: string | null) => Promise<void>;
+  onSaveTransportPlan: (key: string, plan: TransportPlan) => Promise<void>;
 }) {
   useLang();
+  const [tab, setTab] = useOverviewTab();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const start = parseISO(trip.start_date);
@@ -519,6 +552,22 @@ export function TripOverview({
       text: t('{names} 還沒登記航班', { names: noFlight.map(u => u.username.split(' ')[0]).join(t('、')) }),
       action: onAddFlight,
       actionLabel: t('新增航班'),
+    });
+  }
+  const legs = transportLegs(accommodations, activities);
+  const openLegs = legs.filter(l => !l.covered && !trip.transport_plans?.[l.key]?.same_city && l.date >= todayStr);
+  if (openLegs.length > 0) {
+    warnings.push({
+      icon: <TrainFront size={12} />,
+      text: openLegs.length === 1
+        ? t('{date} 換飯店（{from} → {to}）還沒安排交通', {
+            date: format(parseISO(openLegs[0].date), 'M/d'),
+            from: trip.transport_plans?.[openLegs[0].key]?.from_city || openLegs[0].from.name,
+            to: trip.transport_plans?.[openLegs[0].key]?.to_city || openLegs[0].to.name,
+          })
+        : t('{n} 次換飯店還沒安排交通', { n: openLegs.length }),
+      action: () => setTab('transport'),
+      actionLabel: t('看交通建議'),
     });
   }
   if (emptyDays.length > 0) {
@@ -661,263 +710,6 @@ export function TripOverview({
         </div>
       )}
 
-      {/* ── Reservations ── */}
-      <Reservations
-        ideas={ideas}
-        accommodations={accommodations}
-        trip={trip}
-        activities={activities}
-        dates={dates}
-        members={members}
-        onSetPartySize={onSetPartySize}
-        onToggle={onToggleReservations}
-        onAddToPlan={onAddBookingToPlan}
-        onJumpToDay={onJumpToDay}
-      />
-
-      {/* ── Idea stash ── */}
-      <IdeaStash
-        trip={trip}
-        ideas={ideas}
-        activities={activities}
-        dates={dates}
-        currentUser={currentUser}
-        onJumpToDay={onJumpToDay}
-        onSetMapsList={onSetMapsList}
-      />
-
-      {/* ── Day by day ── */}
-      <Section id="days" title={t('每日一覽')} summary={t('{n} 天', { n: dates.length })}>
-        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden divide-y divide-zinc-100">
-          {dates.map((date, i) => {
-            const dayActivities = activities
-              .filter(a => a.date === date)
-              .sort((a, b) => a.start_time.localeCompare(b.start_time));
-            const d = parseISO(date);
-            const isToday = date === todayStr;
-            const hasFlight = dayActivities.some(a => a.is_flight);
-            const checkIn = accommodations.find(a => a.check_in === date);
-            const checkOut = accommodations.find(a => a.check_out === date);
-            const preview = dayActivities
-              .filter(a => !a.is_flight)
-              .map(a => a.activity)
-              .slice(0, 3)
-              .join(' · ');
-
-            return (
-              <div key={date}>
-              <button
-                onClick={() => onJumpToDay(date)}
-                className={cn(
-                  'w-full flex items-center gap-3 p-3 text-left transition-colors hover:bg-zinc-50',
-                  isToday && 'bg-emerald-50/40',
-                )}
-              >
-                <div
-                  className={cn(
-                    'w-11 flex-shrink-0 rounded-xl py-1.5 text-center border',
-                    isToday
-                      ? 'bg-emerald-500 text-white border-emerald-500'
-                      : dayActivities.length === 0
-                        ? 'bg-zinc-50 text-zinc-300 border-zinc-100 border-dashed'
-                        : 'bg-zinc-900 text-white border-zinc-900',
-                  )}
-                >
-                  <div className="text-[8px] font-bold uppercase tracking-widest opacity-60 leading-none">Day</div>
-                  <div className="text-base font-black leading-tight tabular-nums">{i + 1}</div>
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-xs font-bold text-zinc-700 tabular-nums">
-                      {format(d, 'M/d')}
-                      <span className="font-normal text-zinc-400 ml-1">{weekday(d)}</span>
-                    </span>
-                    {isToday && (
-                      <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">
-                        {t('今天')}
-                      </span>
-                    )}
-                    {hasFlight && <Plane size={10} className="text-blue-400" />}
-                    {checkIn && <span title={t('入住 {name}', { name: checkIn.name })}><KeyRound size={10} className="text-zinc-400" /></span>}
-                    {checkOut && <span title={t('退房 {name}', { name: checkOut.name })}><Luggage size={10} className="text-zinc-400" /></span>}
-                  </div>
-                  <p
-                    className={cn(
-                      'text-[11px] mt-0.5 truncate leading-relaxed',
-                      dayActivities.length === 0 ? 'text-zinc-300 italic' : 'text-zinc-500',
-                    )}
-                  >
-                    {dayActivities.length === 0
-                      ? t('這天還是空的')
-                      : preview || t('{n} 項行程', { n: dayActivities.length })}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  {dayActivities.length > 0 && (
-                    <span className="text-[10px] font-bold text-zinc-400 tabular-nums">{dayActivities.length}</span>
-                  )}
-                  <ChevronRight size={14} className="text-zinc-300" />
-                </div>
-              </button>
-              {suggestedByDate[date] && (
-                <SuggestedDayCard
-                  day={suggestedByDate[date]}
-                  fits={(start, end) => fitsWindow(windows, date, start, end)}
-                  onImport={ids => onImportSuggestion(date, ids)}
-                />
-              )}
-              </div>
-            );
-          })}
-        </div>
-      </Section>
-
-      {/* ── Flights ── */}
-      {flights.length > 0 && (
-        <Section id="flights" title={t('航班')} summary={t('{n} 班', { n: flights.length })} defaultOpen={false}>
-          <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
-            {flights
-              .slice()
-              .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time))
-              .map(f => (
-                <button
-                  key={f.id}
-                  onClick={() => onJumpToDay(f.date)}
-                  className="w-full flex items-center gap-3 p-3 text-left hover:bg-zinc-50 transition-colors"
-                >
-                  <Plane size={14} className="text-blue-400 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-zinc-800 truncate">{f.activity.replace(/^✈️\s*/, '').replace('航班:', t('航班:')).replace(' 🛫 ', ' → ')}</div>
-                    <div className="text-[10px] text-zinc-400 tabular-nums mt-0.5">
-                      {format(parseISO(f.date), 'M/d')} · {f.start_time} → {f.end_time}
-                    </div>
-                  </div>
-                  <ChevronRight size={14} className="text-zinc-300 flex-shrink-0" />
-                </button>
-              ))}
-          </div>
-        </Section>
-      )}
-
-      {/* ── Who is on which flight ── */}
-      {members.length > 1 && flights.length > 0 && (
-        <Section id="who-flies" title={t('誰搭哪一班')} summary={noFlight.length > 0 ? t('{n} 人還沒登記', { n: noFlight.length }) : t('{n} 人', { n: members.length })}>
-          <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
-            {members.map(u => {
-              const mine = flightsOf(u.id);
-              return (
-                <div key={u.id} className="flex items-start gap-3 p-3">
-                  <div className="w-7 h-7 rounded-full bg-zinc-100 flex items-center justify-center text-[11px] font-bold text-zinc-500 flex-shrink-0">
-                    {u.username.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-zinc-800">{u.username}</div>
-                    {mine.length === 0 ? (
-                      <div className="text-[10px] text-amber-600 mt-0.5">{t('還沒登記航班')}</div>
-                    ) : (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {mine.map(f => {
-                          const out = isOutboundDate(f.date, trip.start_date, trip.end_date);
-                          return (
-                            <button
-                              key={f.id}
-                              onClick={() => onJumpToDay(f.date)}
-                              className={cn(
-                                'text-[10px] font-bold px-1.5 py-0.5 rounded-md border tabular-nums',
-                                out ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-violet-50 text-violet-600 border-violet-100',
-                              )}
-                            >
-                              {out ? t('去') : t('回')} {flightNoOf(f.activity) ?? t('航班')} · {format(parseISO(f.date), 'M/d')} {f.start_time}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </Section>
-      )}
-
-      {/* ── Accommodations ── */}
-      {accommodations.length > 0 && (
-        <Section id="lodging" title={t('住宿')} summary={t('{n} 間', { n: accommodations.length })} defaultOpen={false}>
-          <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
-            {accommodations
-              .slice()
-              .sort((a, b) => a.check_in.localeCompare(b.check_in))
-              .map(acc => {
-                const accNights = Math.max(differenceInDays(parseISO(acc.check_out), parseISO(acc.check_in)), 0);
-                return (
-                  <div key={acc.id} className="flex items-center gap-3 p-3">
-                    <Hotel size={14} className="text-emerald-500 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-zinc-800 truncate">{acc.name}</div>
-                      <div className="text-[10px] text-zinc-400 tabular-nums mt-0.5">
-                        {format(parseISO(acc.check_in), 'M/d')} → {format(parseISO(acc.check_out), 'M/d')} · {t('{n} 晚', { n: accNights })}
-                        {acc.confirmation && <span className="text-emerald-700"> · #{acc.confirmation}</span>}
-                      </div>
-                    </div>
-                    {acc.map_url && (
-                      <a
-                        href={acc.map_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] font-bold text-emerald-600 hover:underline flex items-center gap-1 flex-shrink-0"
-                      >
-                        <MapPin size={10} /> {t('地圖')}
-                      </a>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
-        </Section>
-      )}
-
-      {/* ── Expenses by category ── */}
-      {topCategories.length > 0 && (
-        <Section
-          id="spending"
-          title={t('支出分布')}
-          summary={`$${Math.round(totalSpent).toLocaleString()} ${totalCurrency}`}
-          defaultOpen={false}
-          right={
-            <button onClick={onOpenExpenses} className="text-[11px] font-bold text-zinc-400 hover:text-zinc-900 flex-shrink-0">
-              {t('詳細分析 →')}
-            </button>
-          }
-        >
-          <div className="bg-white rounded-2xl border border-zinc-200 p-3.5 space-y-2.5">
-            {topCategories.map(([cat, amount]) => (
-              <div key={cat}>
-                <div className="flex items-center justify-between text-[11px] mb-1">
-                  <span className="font-bold text-zinc-600">{t(cat)}</span>
-                  <span className="text-zinc-400 tabular-nums">
-                    ${Math.round(amount).toLocaleString()}
-                    <span className="text-zinc-300 ml-1.5">
-                      {totalSpent > 0 ? Math.round((amount / totalSpent) * 100) : 0}%
-                    </span>
-                  </span>
-                </div>
-                <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${totalSpent > 0 ? (amount / totalSpent) * 100 : 0}%` }}
-                    transition={{ duration: 0.5, ease: 'easeOut' }}
-                    className="h-full bg-zinc-900 rounded-full"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
       {/* ── Checklist progress ── */}
       {checklist.length > 0 && (
         <button
@@ -948,6 +740,318 @@ export function TripOverview({
           )}
         </button>
       )}
+
+      {/* ── Sub-tabs: everything below the headline numbers, one view at a time ── */}
+      <div className="flex gap-1 overflow-x-auto -mx-1 px-1 pb-0.5 [scrollbar-width:none]">
+        {OVERVIEW_TABS.map(k => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={cn(
+              'flex items-center gap-1 text-[11px] font-bold px-3 py-1.5 rounded-full border whitespace-nowrap transition-colors',
+              tab === k ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-500 border-zinc-200 hover:text-zinc-900',
+            )}
+          >
+            {t(TAB_LABEL[k])}
+            {k === 'transport' && openLegs.length > 0 && (
+              <span className={cn('text-[9px] tabular-nums px-1 rounded-full', tab === k ? 'bg-white/20' : 'bg-amber-100 text-amber-800')}>{openLegs.length}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <ForceOpen.Provider value={true}>
+        {tab === 'bookings' && (
+          ideas.some(isBookable) || accommodations.some(a => a.confirmation) ? (
+            <>
+            <Reservations
+              ideas={ideas}
+              accommodations={accommodations}
+              trip={trip}
+              activities={activities}
+              dates={dates}
+              members={members}
+              onSetPartySize={onSetPartySize}
+              onToggle={onToggleReservations}
+              onAddToPlan={onAddBookingToPlan}
+              onJumpToDay={onJumpToDay}
+            />
+
+            </>
+          ) : (
+            <p className="text-xs text-zinc-400 bg-white rounded-2xl border border-dashed border-zinc-200 p-4 text-center">
+              {t('還沒有訂位。餐廳、門票放進靈感暫存區後可以請 Muse 訂；確認信寄到 Gmail 會自動帶進來。')}
+            </p>
+          )
+        )}
+
+        {tab === 'transport' && (
+          <TransportPlanner
+            trip={trip}
+            legs={legs}
+            people={trip.party_size || Math.max(members.length, 1)}
+            onSavePlan={onSaveTransportPlan}
+            onJumpToDay={onJumpToDay}
+          />
+        )}
+
+        {tab === 'ideas' && (
+          <>
+            <IdeaStash
+              trip={trip}
+              ideas={ideas}
+              activities={activities}
+              dates={dates}
+              currentUser={currentUser}
+              onJumpToDay={onJumpToDay}
+              onSetMapsList={onSetMapsList}
+            />
+
+          </>
+        )}
+
+        {tab === 'days' && (
+          <>
+            {/* ── Day by day ── */}
+            <Section id="days" title={t('每日一覽')} summary={t('{n} 天', { n: dates.length })}>
+              <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden divide-y divide-zinc-100">
+                {dates.map((date, i) => {
+                  const dayActivities = activities
+                    .filter(a => a.date === date)
+                    .sort((a, b) => a.start_time.localeCompare(b.start_time));
+                  const d = parseISO(date);
+                  const isToday = date === todayStr;
+                  const hasFlight = dayActivities.some(a => a.is_flight);
+                  const checkIn = accommodations.find(a => a.check_in === date);
+                  const checkOut = accommodations.find(a => a.check_out === date);
+                  const preview = dayActivities
+                    .filter(a => !a.is_flight)
+                    .map(a => a.activity)
+                    .slice(0, 3)
+                    .join(' · ');
+
+                  return (
+                    <div key={date}>
+                    <button
+                      onClick={() => onJumpToDay(date)}
+                      className={cn(
+                        'w-full flex items-center gap-3 p-3 text-left transition-colors hover:bg-zinc-50',
+                        isToday && 'bg-emerald-50/40',
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          'w-11 flex-shrink-0 rounded-xl py-1.5 text-center border',
+                          isToday
+                            ? 'bg-emerald-500 text-white border-emerald-500'
+                            : dayActivities.length === 0
+                              ? 'bg-zinc-50 text-zinc-300 border-zinc-100 border-dashed'
+                              : 'bg-zinc-900 text-white border-zinc-900',
+                        )}
+                      >
+                        <div className="text-[8px] font-bold uppercase tracking-widest opacity-60 leading-none">Day</div>
+                        <div className="text-base font-black leading-tight tabular-nums">{i + 1}</div>
+                      </div>
+
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold text-zinc-700 tabular-nums">
+                            {format(d, 'M/d')}
+                            <span className="font-normal text-zinc-400 ml-1">{weekday(d)}</span>
+                          </span>
+                          {isToday && (
+                            <span className="text-[9px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">
+                              {t('今天')}
+                            </span>
+                          )}
+                          {hasFlight && <Plane size={10} className="text-blue-400" />}
+                          {checkIn && <span title={t('入住 {name}', { name: checkIn.name })}><KeyRound size={10} className="text-zinc-400" /></span>}
+                          {checkOut && <span title={t('退房 {name}', { name: checkOut.name })}><Luggage size={10} className="text-zinc-400" /></span>}
+                        </div>
+                        <p
+                          className={cn(
+                            'text-[11px] mt-0.5 truncate leading-relaxed',
+                            dayActivities.length === 0 ? 'text-zinc-300 italic' : 'text-zinc-500',
+                          )}
+                        >
+                          {dayActivities.length === 0
+                            ? t('這天還是空的')
+                            : preview || t('{n} 項行程', { n: dayActivities.length })}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {dayActivities.length > 0 && (
+                          <span className="text-[10px] font-bold text-zinc-400 tabular-nums">{dayActivities.length}</span>
+                        )}
+                        <ChevronRight size={14} className="text-zinc-300" />
+                      </div>
+                    </button>
+                    {suggestedByDate[date] && (
+                      <SuggestedDayCard
+                        day={suggestedByDate[date]}
+                        fits={(start, end) => fitsWindow(windows, date, start, end)}
+                        onImport={ids => onImportSuggestion(date, ids)}
+                      />
+                    )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Section>
+
+          </>
+        )}
+
+        {tab === 'more' && (
+          <div className="space-y-4">
+            {/* ── Flights ── */}
+            {flights.length > 0 && (
+              <Section id="flights" title={t('航班')} summary={t('{n} 班', { n: flights.length })} defaultOpen={false}>
+                <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
+                  {flights
+                    .slice()
+                    .sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time))
+                    .map(f => (
+                      <button
+                        key={f.id}
+                        onClick={() => onJumpToDay(f.date)}
+                        className="w-full flex items-center gap-3 p-3 text-left hover:bg-zinc-50 transition-colors"
+                      >
+                        <Plane size={14} className="text-blue-400 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-zinc-800 truncate">{f.activity.replace(/^✈️\s*/, '').replace('航班:', t('航班:')).replace(' 🛫 ', ' → ')}</div>
+                          <div className="text-[10px] text-zinc-400 tabular-nums mt-0.5">
+                            {format(parseISO(f.date), 'M/d')} · {f.start_time} → {f.end_time}
+                          </div>
+                        </div>
+                        <ChevronRight size={14} className="text-zinc-300 flex-shrink-0" />
+                      </button>
+                    ))}
+                </div>
+              </Section>
+            )}
+
+            {/* ── Who is on which flight ── */}
+            {members.length > 1 && flights.length > 0 && (
+              <Section id="who-flies" title={t('誰搭哪一班')} summary={noFlight.length > 0 ? t('{n} 人還沒登記', { n: noFlight.length }) : t('{n} 人', { n: members.length })}>
+                <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
+                  {members.map(u => {
+                    const mine = flightsOf(u.id);
+                    return (
+                      <div key={u.id} className="flex items-start gap-3 p-3">
+                        <div className="w-7 h-7 rounded-full bg-zinc-100 flex items-center justify-center text-[11px] font-bold text-zinc-500 flex-shrink-0">
+                          {u.username.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-zinc-800">{u.username}</div>
+                          {mine.length === 0 ? (
+                            <div className="text-[10px] text-amber-600 mt-0.5">{t('還沒登記航班')}</div>
+                          ) : (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {mine.map(f => {
+                                const out = isOutboundDate(f.date, trip.start_date, trip.end_date);
+                                return (
+                                  <button
+                                    key={f.id}
+                                    onClick={() => onJumpToDay(f.date)}
+                                    className={cn(
+                                      'text-[10px] font-bold px-1.5 py-0.5 rounded-md border tabular-nums',
+                                      out ? 'bg-blue-50 text-blue-600 border-blue-100' : 'bg-violet-50 text-violet-600 border-violet-100',
+                                    )}
+                                  >
+                                    {out ? t('去') : t('回')} {flightNoOf(f.activity) ?? t('航班')} · {format(parseISO(f.date), 'M/d')} {f.start_time}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Section>
+            )}
+
+            {/* ── Accommodations ── */}
+            {accommodations.length > 0 && (
+              <Section id="lodging" title={t('住宿')} summary={t('{n} 間', { n: accommodations.length })} defaultOpen={false}>
+                <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
+                  {accommodations
+                    .slice()
+                    .sort((a, b) => a.check_in.localeCompare(b.check_in))
+                    .map(acc => {
+                      const accNights = Math.max(differenceInDays(parseISO(acc.check_out), parseISO(acc.check_in)), 0);
+                      return (
+                        <div key={acc.id} className="flex items-center gap-3 p-3">
+                          <Hotel size={14} className="text-emerald-500 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-bold text-zinc-800 truncate">{acc.name}</div>
+                            <div className="text-[10px] text-zinc-400 tabular-nums mt-0.5">
+                              {format(parseISO(acc.check_in), 'M/d')} → {format(parseISO(acc.check_out), 'M/d')} · {t('{n} 晚', { n: accNights })}
+                              {acc.confirmation && <span className="text-emerald-700"> · #{acc.confirmation}</span>}
+                            </div>
+                          </div>
+                          {acc.map_url && (
+                            <a
+                              href={acc.map_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-bold text-emerald-600 hover:underline flex items-center gap-1 flex-shrink-0"
+                            >
+                              <MapPin size={10} /> {t('地圖')}
+                            </a>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </Section>
+            )}
+
+            {/* ── Expenses by category ── */}
+            {topCategories.length > 0 && (
+              <Section
+                id="spending"
+                title={t('支出分布')}
+                summary={`$${Math.round(totalSpent).toLocaleString()} ${totalCurrency}`}
+                defaultOpen={false}
+                right={
+                  <button onClick={onOpenExpenses} className="text-[11px] font-bold text-zinc-400 hover:text-zinc-900 flex-shrink-0">
+                    {t('詳細分析 →')}
+                  </button>
+                }
+              >
+                <div className="bg-white rounded-2xl border border-zinc-200 p-3.5 space-y-2.5">
+                  {topCategories.map(([cat, amount]) => (
+                    <div key={cat}>
+                      <div className="flex items-center justify-between text-[11px] mb-1">
+                        <span className="font-bold text-zinc-600">{t(cat)}</span>
+                        <span className="text-zinc-400 tabular-nums">
+                          ${Math.round(amount).toLocaleString()}
+                          <span className="text-zinc-300 ml-1.5">
+                            {totalSpent > 0 ? Math.round((amount / totalSpent) * 100) : 0}%
+                          </span>
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${totalSpent > 0 ? (amount / totalSpent) * 100 : 0}%` }}
+                          transition={{ duration: 0.5, ease: 'easeOut' }}
+                          className="h-full bg-zinc-900 rounded-full"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Section>
+            )}
+
+          </div>
+        )}
+      </ForceOpen.Provider>
     </div>
   );
 }

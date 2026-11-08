@@ -78,6 +78,42 @@ export interface Trip {
     source?: string;
     days: SuggestedDay[];
   };
+  /**
+   * Gemini's suggestion for each move between two hotels, keyed by
+   * transportLegs()'s leg key. Kept on the trip like travel times are kept on
+   * activities: worked out once, redone only when the hotels or dates change.
+   */
+  transport_plans?: Record<string, TransportPlan>;
+}
+
+export interface TransportOption {
+  mode: 'train' | 'bus' | 'flight' | 'ferry' | 'car' | 'taxi' | 'walk';
+  /** "Renfe AVE", "ALSA", "Vueling". */
+  operator: string;
+  minutes: number;
+  /** For the whole party, local currency, a range. */
+  price: string;
+  /** A sensible departure after check-out, "HH:MM", and when that gets in. */
+  depart: string;
+  arrive: string;
+  from_station: string;
+  to_station: string;
+  /** The operator's own booking site; a homepage, never a guessed deep link. */
+  book_url: string;
+  /** When to book by, e.g. "AVE 早訂便宜，建議 2–4 週前". */
+  book_ahead: string;
+}
+
+export interface TransportPlan {
+  /** The leg it was worked out for, so changed hotels or dates redo it. */
+  for: string;
+  from_city: string;
+  to_city: string;
+  /** Two hotels in one city: a taxi across town, not a ticket to book. */
+  same_city: boolean;
+  options: TransportOption[];
+  recommended: number;
+  tip: string;
 }
 
 export interface SuggestedDay {

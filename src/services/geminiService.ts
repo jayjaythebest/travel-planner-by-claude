@@ -364,6 +364,69 @@ headline 與每條 tips 都用 ${outLang()}，tips 每條 25 字以內（英文�
     return JSON.parse(response.text || "{}");
   },
 
+  /** How to get from one hotel to the next on a moving day: options, the pick, and when to book. */
+  async getIntercityTransport(p: {
+    from: { name: string; address: string };
+    to: { name: string; address: string };
+    date: string;
+    country: string;
+    people: number;
+  }) {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `旅遊國家：${p.country}。${p.date} 這天 ${p.people} 人要換住宿：
+從「${p.from.name}」（${p.from.address || '地址不明'}）退房，
+到「${p.to.name}」（${p.to.address || '地址不明'}）入住。
+
+1. from_city、to_city：兩間住宿所在的城市（當地常用寫法，例如 Sevilla、Lisboa）。同一個城市 same_city 填 true，options 只給計程車和大眾運輸。
+2. options：城市之間實際可行的 2–3 種交通方式（火車、巴士、飛機、渡輪、開車），依推薦程度排序。每個都要有：
+   - operator：營運商與車種，例如 "Renfe AVE"、"ALSA"、"Vueling"
+   - minutes：車程分鐘數（不含到車站的時間）
+   - price：${p.people} 人合計的大約價格，當地貨幣，給範圍
+   - depart、arrive：建議的出發與抵達時間 HH:MM。上午退房後、中午前後出發比較合理；寫那條路線真的常見的班次時間
+   - from_station、to_station：上下車的車站或機場
+   - book_url：營運商官方網站首頁（例如 https://www.renfe.com、https://www.alsa.com），不要編造訂票頁的深層連結；開車、計程車填空字串
+   - book_ahead：什麼時候要訂、會不會賣完、早訂是否便宜，一句話
+3. recommended：最推薦的那個在 options 的索引（從 0 開始）
+4. tip：一句最實用的提醒（例如車站離市中心多遠、帶大行李的注意事項）
+文字用${outLang()}，地名、車站名、營運商保留原文。`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            from_city: { type: Type.STRING },
+            to_city: { type: Type.STRING },
+            same_city: { type: Type.BOOLEAN },
+            options: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  mode: { type: Type.STRING, enum: ['train', 'bus', 'flight', 'ferry', 'car', 'taxi', 'walk'] },
+                  operator: { type: Type.STRING },
+                  minutes: { type: Type.NUMBER },
+                  price: { type: Type.STRING },
+                  depart: { type: Type.STRING },
+                  arrive: { type: Type.STRING },
+                  from_station: { type: Type.STRING },
+                  to_station: { type: Type.STRING },
+                  book_url: { type: Type.STRING },
+                  book_ahead: { type: Type.STRING },
+                },
+                required: ['mode', 'operator', 'minutes', 'price', 'depart', 'arrive', 'from_station', 'to_station', 'book_url', 'book_ahead'],
+              },
+            },
+            recommended: { type: Type.NUMBER },
+            tip: { type: Type.STRING },
+          },
+          required: ['from_city', 'to_city', 'same_city', 'options', 'recommended', 'tip'],
+        },
+      },
+    });
+    return JSON.parse(response.text || "{}");
+  },
+
   async getActivityPhoto(activityName: string, country: string): Promise<string> {
     const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 

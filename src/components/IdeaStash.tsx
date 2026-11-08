@@ -32,7 +32,7 @@ import { geminiService, MAPS_LINK_RE } from '../services/geminiService';
 import { cn } from '../utils';
 import { Trip, Activity, Idea, IdeaPhoto, User } from '../types';
 import { t, useLang, getLang } from '../i18n';
-import { useCollapsed } from './Section';
+import { useCollapsed, useForceOpen } from './Section';
 
 /** Notion-style: a gray line icon where a category leads a row, a soft text-only tag elsewhere. */
 export const CATEGORY_META: Record<Idea['category'], { icon: LucideIcon; label: string; chip: string }> = {
@@ -136,6 +136,7 @@ export function IdeaStash({
 }) {
   useLang();
   const [expanded, toggleExpanded] = useCollapsed('idea-stash', false);
+  const forced = useForceOpen();
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [pasteSource, setPasteSource] = useState('');
@@ -474,7 +475,7 @@ export function IdeaStash({
             <button onClick={toggleExpanded} className="text-left">
               <h3 className="text-sm font-bold text-zinc-900 leading-tight flex items-center gap-1">
                 {t('靈感暫存區')}
-                <ChevronDown size={14} className={cn('text-zinc-400 transition-transform', !expanded && '-rotate-90')} />
+                {!forced && <ChevronDown size={14} className={cn('text-zinc-400 transition-transform', !expanded && '-rotate-90')} />}
               </h3>
               <p className="text-[10px] text-zinc-400 leading-tight mt-0.5">
                 {t('想去但還沒決定哪天的地方 · {n} 個待安排', { n: open.length })}

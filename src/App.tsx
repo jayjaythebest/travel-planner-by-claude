@@ -41,7 +41,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, freeWindows, fitsWindow, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
-import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User, TransferEstimate } from './types';
+import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User, TransferEstimate, TransportPlan } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
@@ -1258,6 +1258,16 @@ export default function App() {
       setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, suggested_plan: next } : prev));
       setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, suggested_plan: next } : tr)));
     }
+  };
+
+  /** One leg's transport suggestion, kept on the trip so it is worked out once. */
+  const handleSaveTransportPlan = async (key: string, plan: TransportPlan) => {
+    if (!selectedTrip) return;
+    const tripRef = selectedTrip;
+    await updateDoc(doc(db, 'trips', tripRef.documentId || tripRef.id), { [`transport_plans.${key}`]: plan });
+    const patch = (tr: Trip) => ({ ...tr, transport_plans: { ...(tr.transport_plans ?? {}), [key]: plan } });
+    setSelectedTrip(prev => (prev && prev.id === tripRef.id ? patch(prev) : prev));
+    setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? patch(tr) : tr)));
   };
 
   /** Headcount for bookings. A change makes the reservation-agent ask Muse to amend existing ones. */
@@ -2690,6 +2700,7 @@ export default function App() {
               onAddBookingToPlan={handleAddBookingToPlan}
               onSetPartySize={handleSetPartySize}
               onSetMapsList={handleSetMapsList}
+              onSaveTransportPlan={handleSaveTransportPlan}
               onCoverError={() => selectedTrip && loadCover(selectedTrip, true)}
             />
           ) : (
