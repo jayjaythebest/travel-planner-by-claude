@@ -867,8 +867,10 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
 # ── "Please check the plan" emails ───────────────────────────────────────────
 # The app queues these on trip.notify_requests (Firebase Hosting has no server
 # to send from); this sends each once and stamps sent_at or error. The tag keeps
-# our own sent copy out of HOTEL_QUERY, whose subject net includes 確認.
+# our own sent copy out of HOTEL_QUERY, whose subject net includes 確認 and
+# "updated". The email is in the language the trip is named in.
 NOTIFY_TAG = "[旅伴通知]"
+NOTIFY_TAG_EN = "[Trip notice]"
 APP_URL = "https://travel-planner-cf0d4.web.app"
 
 
@@ -886,39 +888,53 @@ def send_notify_requests(db, gmail, dry: bool) -> None:
             if r.get("sent_at") or r.get("error"):
                 continue
             sender = profile(r.get("from", ""))
-            who = sender.get("username") or "旅伴"
-            to = [(uid, profile(uid).get("email")) for uid in r.get("to", [])]
-            emails = [e for _, e in to if e]
-            skipped = [uid for uid, e in to if not e]
-            print(f"notify {trip.get('name')} ({ref.id}) {rid}: {len(emails)} recipients, {len(skipped)} without email")
+            to = [(uid, profile(uid)) for uid in r.get("to", [])]
+            reach = [(uid, p) for uid, p in to if p.get("email")]
+            skipped = [uid for uid, p in to if not p.get("email")]
+            print(f"notify {trip.get('name')} ({ref.id}) {rid}: {len(reach)} recipients, {len(skipped)} without email")
             if dry:
                 continue
-            if not emails:
+            if not reach:
                 ref.reference.update({f"notify_requests.{rid}.error": "no recipient has an email",
                                       f"notify_requests.{rid}.skipped": skipped})
                 continue
-            em = EmailMessage()
-            em["To"] = ", ".join(emails)
-            em["From"] = MAILBOX
-            if sender.get("email"):
-                em["Reply-To"] = sender["email"]
-            em["Subject"] = f"{NOTIFY_TAG} {who} 請你看一下「{trip.get('name', '')}」的行程"
-            lines = [
-                f"{who} 更新了「{trip.get('name', '')}」（{trip.get('start_date', '')} – {trip.get('end_date', '')}）的行程，"
-                "請上 Travel Planner 確認一下：",
-                APP_URL,
-            ]
-            if r.get("message"):
-                lines += ["", f"{who} 說：", r["message"]]
-            lines += ["", f"{who} asked you to review the plan for \"{trip.get('name', '')}\" on Travel Planner: {APP_URL}"]
-            em.set_content("\n".join(lines))
-            try:
-                gmail.users().messages().send(
-                    userId="me", body={"raw": base64.urlsafe_b64encode(em.as_bytes()).decode()}).execute()
-                ref.reference.update({f"notify_requests.{rid}.sent_at": now_iso(),
-                                      **({f"notify_requests.{rid}.skipped": skipped} if skipped else {})})
-            except Exception as e:  # stamp it so a bad address is not retried every 10 minutes
-                ref.reference.update({f"notify_requests.{rid}.error": repr(e)[:300]})
+            name, dates = trip.get("name", ""), f"{trip.get('start_date', '')} – {trip.get('end_date', '')}"
+            # One language per email, the one the trip is named in.
+            zh = bool(re.search(r"[㐀-鿿]", name))
+            # One email per person, addressed to them by name.
+            failed: list[str] = []
+            for uid, p in reach:
+                first = (p.get("username") or "").split(" ")[0]
+                em = EmailMessage()
+                em["To"] = p["email"]
+                em["From"] = MAILBOX
+                if sender.get("email"):
+                    em["Reply-To"] = sender["email"]
+                if zh:
+                    em["Subject"] = f"{NOTIFY_TAG} {first}，請確認「{name}」的行程"
+                    lines = [f"{first} 你好，", "", f"「{name}」（{dates}）的行程有更新，請到這裡確認：", APP_URL]
+                    if r.get("message"):
+                        lines += ["", f"{sender.get('username') or '旅伴'} 留言：", r["message"]]
+                else:
+                    em["Subject"] = f"{NOTIFY_TAG_EN} {first}, please check your itinerary for \"{name}\""
+                    lines = [f"Hi {first},", "", f"The plan for \"{name}\" ({dates}) has been updated. "
+                             "Please check your itinerary here:", APP_URL]
+                    if r.get("message"):
+                        lines += ["", f"Note from {sender.get('username') or 'your travel companion'}:", r["message"]]
+                em.set_content("\n".join(lines))
+                try:
+                    gmail.users().messages().send(
+                        userId="me", body={"raw": base64.urlsafe_b64encode(em.as_bytes()).decode()}).execute()
+                except Exception as e:
+                    print(f"  notify {uid} ERROR: {e!r}")
+                    failed.append(uid)
+            # Stamped either way, so a bad address is not retried every 10 minutes.
+            done = {f"notify_requests.{rid}.sent_at": now_iso()} if len(failed) < len(reach) else {}
+            if failed:
+                done[f"notify_requests.{rid}.error"] = f"failed for {', '.join(failed)}"
+            if skipped:
+                done[f"notify_requests.{rid}.skipped"] = skipped
+            ref.reference.update(done)
 
 
 # ── Hotel confirmations ──────────────────────────────────────────────────────
@@ -927,7 +943,7 @@ def send_notify_requests(db, gmail, dry: bool) -> None:
 # notes), so the net is wide; the Promotions tab is left out because "stay"
 # alone matches every loyalty-points mailing.
 HOTEL_QUERY = (
-    'newer_than:180d -subject:"muse定位串" -subject:"旅伴通知" -category:promotions '
+    'newer_than:180d -subject:"muse定位串" -subject:"旅伴通知" -subject:"Trip notice" -category:promotions '
     "subject:(reservation OR booking OR confirmation OR confirmed OR cancellation OR cancelled OR canceled "
     "OR itinerary OR update OR updated OR change OR changed OR changes OR modified OR modification "
     "OR stay OR check-in OR arrival OR 預訂 OR 訂房 OR 確認 OR 取消 OR 變更 OR 更改 OR 修改 OR 入住)"
