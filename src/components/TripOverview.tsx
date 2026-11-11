@@ -23,7 +23,7 @@ import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
 import { cn, convertAmount, totalsCurrency, flightNoOf, isOutboundDate, flagUrl, freeWindows, fitsWindow } from '../utils';
 import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, SuggestedDay, Reservation, TransportPlan } from '../types';
-import { IdeaStash, isInReservations, isBookable, CATEGORY_META } from './IdeaStash';
+import { IdeaStash, isInReservations, isBookable, resNote, CATEGORY_META } from './IdeaStash';
 import { Section, useCollapsed, useForceOpen, ForceOpen } from './Section';
 import { TransportPlanner, transportLegs } from './TransportPlanner';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -312,7 +312,7 @@ function Reservations({
                 const otherDay = museSlot && museSlot.slice(0, 10) !== date;
                 const url = r && bookingUrl(r);
                 const status = !idea ? t('需自行預訂') : r ? t(RES_META[shownStatus(r)].label) : t('還沒問 Muse');
-                const note = r ? (getLang() === 'en' && r.note_en) || r.note : getLang() === 'en' ? stop.note : stop.note_zh || stop.note;
+                const note = r ? resNote(r) : getLang() === 'en' ? stop.note : stop.note_zh || stop.note;
                 return (
                   <div key={stop.id} className="p-3">
                     <div className="flex items-center gap-2">
@@ -403,7 +403,7 @@ function Reservations({
                         {r.confirmation && (
                           <div className="text-[10px] text-emerald-700">{t('確認碼：{code}', { code: r.confirmation })}</div>
                         )}
-                        {r.note && <div className="text-[10px] text-zinc-400 leading-snug">{(getLang() === 'en' && r.note_en) || r.note}</div>}
+                        {resNote(r) && <div className="text-[10px] text-zinc-400 leading-snug">{resNote(r)}</div>}
                       </div>
                     ) : null}
                     {r.status === 'booked' && (() => {

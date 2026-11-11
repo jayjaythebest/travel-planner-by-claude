@@ -1239,7 +1239,7 @@ export default function App() {
       end_time: end,
       activity: idea.title,
       map_url: idea.map_url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([idea.title, idea.area, tripRef.country].filter(Boolean).join(' '))}`,
-      note: [r.confirmation && t('確認碼：{code}', { code: r.confirmation }), (getLang() === 'en' && r.note_en) || r.note]
+      note: [r.confirmation && t('確認碼：{code}', { code: r.confirmation }), getLang() === 'en' ? r.note_en : r.note]
         .filter(Boolean)
         .join(' · '),
       is_flight: false,

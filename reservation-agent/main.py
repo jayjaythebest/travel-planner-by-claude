@@ -619,21 +619,50 @@ def parse_reply_plain(text: str, refs: dict, ideas: dict[str, dict], trip: dict)
     return out, unread
 
 
+def fill_note_en(rows: list[dict]) -> list[dict]:
+    """The fixed-format reply is read verbatim and so has only Muse's Chinese note;
+    translate those in one call. Fail-soft: the app shows no note in English rather
+    than the Chinese one."""
+    todo = [r for r in rows if r.get("note") and not r.get("note_en")]
+    if not todo:
+        return rows
+    try:
+        client = gemini()
+        res = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents="Translate each Traditional Chinese note into one short English sentence for a "
+                     "travel app. Keep names, amounts, dates, emails, phone numbers and URLs as they are. "
+                     "Return the translations in the same order.\n\n"
+                     + json.dumps([r["note"] for r in todo], ensure_ascii=False),
+            config=gtypes.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema={"type": "ARRAY", "items": {"type": "STRING"}},
+            ),
+        )
+        out = json.loads(res.text)
+        if len(out) == len(todo):
+            for r, en in zip(todo, out):
+                r["note_en"] = en.strip()
+    except Exception as e:
+        print(f"  note translation failed: {e!r}")
+    return rows
+
+
 def parse_reply(text: str, refs: dict, ideas: dict[str, dict], trip: dict) -> list[dict]:
     plain, unread = parse_reply_plain(text, refs, ideas, trip)
     if plain and not unread:
-        return plain
+        return fill_note_en(plain)
     try:
         ai = parse_reply_gemini(text, refs, ideas, trip)
     except Exception as e:
         if not plain:
             raise
         print(f"  Gemini failed ({e!r}); using {len(plain)} plain rows")
-        return plain
+        return fill_note_en(plain)
     merged = {r["idea_id"]: r for r in ai}
     for r in plain:  # read verbatim, so it outranks Gemini's reading; keep Gemini's English note
         merged[r["idea_id"]] = {**r, "note_en": merged.get(r["idea_id"], {}).get("note_en", "")}
-    return list(merged.values())
+    return fill_note_en(list(merged.values()))
 
 
 def parse_reply_gemini(text: str, refs: dict, ideas: dict[str, dict], trip: dict) -> list[dict]:
@@ -1469,14 +1498,14 @@ def parse_muse_update_plain(text: str, trips: list[tuple[str, dict, str]]) -> li
 def parse_muse_update(text: str, trip_list: str, trips: list[tuple[str, dict, str]]) -> list[dict]:
     plain = parse_muse_update_plain(text, trips)
     if plain and all(p["trip"] for p in plain):
-        return plain
+        return fill_note_en(plain)
     try:
         return parse_muse_update_gemini(text, trip_list)
     except Exception as e:
         if not plain:
             raise
         print(f"  Gemini failed ({e!r}); using {len(plain)} plain places")
-        return plain
+        return fill_note_en(plain)
 
 
 def parse_muse_update_gemini(text: str, trip_list: str) -> list[dict]:

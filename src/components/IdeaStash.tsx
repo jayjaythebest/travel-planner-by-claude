@@ -30,7 +30,7 @@ import { collection, addDoc, deleteDoc, doc, updateDoc, onSnapshot, query, where
 import { db } from '../services/firebase';
 import { geminiService, MAPS_LINK_RE } from '../services/geminiService';
 import { cn } from '../utils';
-import { Trip, Activity, Idea, IdeaPhoto, User } from '../types';
+import { Trip, Activity, Idea, IdeaPhoto, User, Reservation } from '../types';
 import { t, useLang, getLang } from '../i18n';
 import { useCollapsed, useForceOpen } from './Section';
 
@@ -53,6 +53,14 @@ export const CATEGORY_META: Record<Idea['category'], { icon: LucideIcon; label: 
 export function isInReservations(i: Idea): boolean {
   const s = i.reservation?.status;
   return isBookable(i) && (s === 'booked' || s === 'requested' || s === 'available' || s === 'needs_card');
+}
+
+/**
+ * Muse's note in the UI language. In English a note with no translation shows
+ * nothing: replies read from the fixed format used to carry only Chinese.
+ */
+export function resNote(r: Reservation): string {
+  return (getLang() === 'en' ? r.note_en : r.note) || '';
 }
 
 /** What the reservation-agent works on: food places, and sights flagged as needing a ticket. */
@@ -823,9 +831,9 @@ export function IdeaStash({
                       )}
                     </div>
                     {idea.note && <p className="text-[11px] text-zinc-500 mt-1.5 leading-relaxed">{idea.note}</p>}
-                    {idea.reservation?.note && (idea.reservation.status === 'walk_in' || idea.reservation.status === 'unavailable') && (
+                    {idea.reservation && resNote(idea.reservation) && (idea.reservation.status === 'walk_in' || idea.reservation.status === 'unavailable') && (
                       <p className="text-[10px] text-zinc-400 mt-1 leading-relaxed">
-                        {(getLang() === 'en' && idea.reservation.note_en) || idea.reservation.note}
+                        {resNote(idea.reservation)}
                       </p>
                     )}
                     <div className="flex items-center gap-2.5 mt-1.5 text-[9px] text-zinc-400 flex-wrap">
