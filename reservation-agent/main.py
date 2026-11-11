@@ -16,7 +16,9 @@ their dates fall in (see import_hotels); and [muse更新] emails — places Jay
 sent Muse over WhatsApp, with what Muse found about booking them — become
 stash ideas on the trip they belong to (see import_muse_updates); and every
 place on a trip's linked Google Maps list that the stash has not seen becomes
-an idea (see import_maps_lists), which step 2 then sends to Muse.
+an idea (see import_maps_lists), which step 2 then sends to Muse. Members
+asked from the app to come and check a trip's plan are emailed too (see
+send_notify_requests).
 
 Nothing is sent for a trip whose food ideas have all been requested already, so
 an idle hour costs a Firestore read and a Gmail search, not an email.
@@ -862,13 +864,70 @@ def handle_trip(db, gmail, trip_ref, trip: dict, dry: bool) -> None:
         trip_ref.update({"reservation_thread": state})
 
 
+# ── "Please check the plan" emails ───────────────────────────────────────────
+# The app queues these on trip.notify_requests (Firebase Hosting has no server
+# to send from); this sends each once and stamps sent_at or error. The tag keeps
+# our own sent copy out of HOTEL_QUERY, whose subject net includes 確認.
+NOTIFY_TAG = "[旅伴通知]"
+APP_URL = "https://travel-planner-cf0d4.web.app"
+
+
+def send_notify_requests(db, gmail, dry: bool) -> None:
+    profiles: dict[str, dict] = {}
+
+    def profile(uid: str) -> dict:
+        if uid not in profiles:
+            profiles[uid] = db.collection("users").document(uid).get().to_dict() or {}
+        return profiles[uid]
+
+    for ref in db.collection("trips").stream():
+        trip = ref.to_dict()
+        for rid, r in (trip.get("notify_requests") or {}).items():
+            if r.get("sent_at") or r.get("error"):
+                continue
+            sender = profile(r.get("from", ""))
+            who = sender.get("username") or "旅伴"
+            to = [(uid, profile(uid).get("email")) for uid in r.get("to", [])]
+            emails = [e for _, e in to if e]
+            skipped = [uid for uid, e in to if not e]
+            print(f"notify {trip.get('name')} ({ref.id}) {rid}: {len(emails)} recipients, {len(skipped)} without email")
+            if dry:
+                continue
+            if not emails:
+                ref.reference.update({f"notify_requests.{rid}.error": "no recipient has an email",
+                                      f"notify_requests.{rid}.skipped": skipped})
+                continue
+            em = EmailMessage()
+            em["To"] = ", ".join(emails)
+            em["From"] = MAILBOX
+            if sender.get("email"):
+                em["Reply-To"] = sender["email"]
+            em["Subject"] = f"{NOTIFY_TAG} {who} 請你看一下「{trip.get('name', '')}」的行程"
+            lines = [
+                f"{who} 更新了「{trip.get('name', '')}」（{trip.get('start_date', '')} – {trip.get('end_date', '')}）的行程，"
+                "請上 Travel Planner 確認一下：",
+                APP_URL,
+            ]
+            if r.get("message"):
+                lines += ["", f"{who} 說：", r["message"]]
+            lines += ["", f"{who} asked you to review the plan for \"{trip.get('name', '')}\" on Travel Planner: {APP_URL}"]
+            em.set_content("\n".join(lines))
+            try:
+                gmail.users().messages().send(
+                    userId="me", body={"raw": base64.urlsafe_b64encode(em.as_bytes()).decode()}).execute()
+                ref.reference.update({f"notify_requests.{rid}.sent_at": now_iso(),
+                                      **({f"notify_requests.{rid}.skipped": skipped} if skipped else {})})
+            except Exception as e:  # stamp it so a bad address is not retried every 10 minutes
+                ref.reference.update({f"notify_requests.{rid}.error": repr(e)[:300]})
+
+
 # ── Hotel confirmations ──────────────────────────────────────────────────────
 # Hotels write again when a stay changes, under many subjects ("Your stay has
 # been updated", "Changes to your reservation", "canceled", pre-arrival
 # notes), so the net is wide; the Promotions tab is left out because "stay"
 # alone matches every loyalty-points mailing.
 HOTEL_QUERY = (
-    'newer_than:180d -subject:"muse定位串" -category:promotions '
+    'newer_than:180d -subject:"muse定位串" -subject:"旅伴通知" -category:promotions '
     "subject:(reservation OR booking OR confirmation OR confirmed OR cancellation OR cancelled OR canceled "
     "OR itinerary OR update OR updated OR change OR changed OR changes OR modified OR modification "
     "OR stay OR check-in OR arrival OR 預訂 OR 訂房 OR 確認 OR 取消 OR 變更 OR 更改 OR 修改 OR 入住)"
@@ -1780,6 +1839,11 @@ def main() -> None:
                 import_muse_updates(db, gmail, me, today, args.dry_run)
         except Exception as e:
             print(f"muse updates ERROR: {e!r}")
+    if gmail is not None:
+        try:
+            send_notify_requests(db, gmail, args.dry_run)
+        except Exception as e:
+            print(f"notify ERROR: {e!r}")
     try:
         import_maps_lists(db, today, args.dry_run)
     except Exception as e:

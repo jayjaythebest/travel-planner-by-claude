@@ -84,6 +84,24 @@ export interface Trip {
    * activities: worked out once, redone only when the hotels or dates change.
    */
   transport_plans?: Record<string, TransportPlan>;
+  /**
+   * "Please come and check the plan" emails, keyed by request id. The app only
+   * queues them; the reservation-agent sends from its Gmail on its next
+   * 10-minute run and stamps `sent_at` (or `error`), because Firebase Hosting
+   * has no server to send mail from.
+   */
+  notify_requests?: Record<string, NotifyRequest>;
+}
+
+export interface NotifyRequest {
+  to: string[];
+  from: string;
+  message?: string;
+  requested_at: string;
+  sent_at?: string;
+  /** Members the agent skipped for having no email on their profile. */
+  skipped?: string[];
+  error?: string;
 }
 
 export interface TransportOption {

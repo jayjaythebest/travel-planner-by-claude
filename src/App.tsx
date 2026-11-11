@@ -37,11 +37,13 @@ import {
   PlaneTakeoff,
   PlaneLanding,
   Check,
-  Pencil
+  Pencil,
+  Mail,
+  Languages
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, freeWindows, fitsWindow, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
-import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User, TransferEstimate, TransportPlan } from './types';
+import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User, TransferEstimate, TransportPlan, NotifyRequest } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
@@ -53,7 +55,8 @@ import { MemberChips } from './components/MemberChips';
 import { CalendarSyncModal } from './components/CalendarSyncModal';
 import { SplitBalances } from './components/SplitBalances';
 import { syncTripToCalendar, CalendarError } from './services/googleCalendar';
-import { t, useLang, LangToggle, getLang } from './i18n';
+import { t, useLang, LangToggle, getLang, setLang } from './i18n';
+import { NotifyMembersModal } from './components/NotifyMembersModal';
 import { 
   collection,
   query,
@@ -439,6 +442,9 @@ export default function App() {
   const [isCoreInfoExpanded, setIsCoreInfoExpanded] = useState(true);
   const [isChecklistExpanded, setIsChecklistExpanded] = useState(true);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  /** Where the 其他功能 menu hangs from; fixed because the header row clips overflow for its collapse animation. */
+  const [moreMenuAt, setMoreMenuAt] = useState<{ top: number; right: number } | null>(null);
+  const [isNotifyOpen, setIsNotifyOpen] = useState(false);
   const [exportEmail, setExportEmail] = useState('');
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [editingActivity, setEditingActivity] = useState<Activity | null>(null);
@@ -1873,6 +1879,39 @@ export default function App() {
     setIsExportModalOpen(false);
   };
 
+  // No onSnapshot on trips, so local copies are moved by hand.
+  const setNotifyRequests = (tripId: string, notify_requests: Trip['notify_requests']) => {
+    setTrips(prev => prev.map(x => (x.id === tripId ? { ...x, notify_requests } : x)));
+    setSelectedTrip(prev => (prev && prev.id === tripId ? { ...prev, notify_requests } : prev));
+  };
+
+  // The agent stamps sent_at after the fact; re-read so the modal shows it.
+  const openNotify = async () => {
+    setIsNotifyOpen(true);
+    if (!selectedTrip) return;
+    const snap = await getDoc(doc(db, 'trips', selectedTrip.documentId || selectedTrip.id));
+    setNotifyRequests(selectedTrip.id, (snap.data() as Trip | undefined)?.notify_requests);
+  };
+
+  const handleNotifyMembers = async (to: string[], message: string) => {
+    if (!selectedTrip || !currentUser) return;
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const req: NotifyRequest = {
+      to,
+      from: currentUser.id,
+      requested_at: new Date().toISOString(),
+      ...(message ? { message } : {}),
+    };
+    try {
+      await updateDoc(doc(db, 'trips', selectedTrip.documentId || selectedTrip.id), { [`notify_requests.${id}`]: req });
+      setNotifyRequests(selectedTrip.id, { ...selectedTrip.notify_requests, [id]: req });
+    } catch (err) {
+      console.error(err);
+      alert(t('通知排程失敗，請稍後再試。'));
+      throw err;
+    }
+  };
+
   const handleSendEmail = async () => {
     if (!selectedTrip || !exportEmail) return;
     setIsSendingEmail(true);
@@ -2583,33 +2622,62 @@ export default function App() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <LangToggle compact />
+                    <button onClick={openNotify} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title={t('通知成員確認行程')}>
+                      <Mail size={16} />
+                    </button>
                     <button onClick={() => setIsAddingFlight(true)} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title={t('新增航班')}>
                       <Plane size={16} />
                     </button>
                     <button onClick={() => setIsAddingAccommodation(true)} className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors" title={t('新增住宿')}>
                       <Hotel size={16} />
                     </button>
-                    <button
-                      onClick={handleExportPDF}
-                      disabled={isGeneratingPdf}
-                      className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors disabled:opacity-50"
-                      title={t('匯出 PDF')}
-                    >
-                      {isGeneratingPdf ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
-                    </button>
-                    <button
-                      onClick={() => setCalendarPickerScope('')}
-                      disabled={isSyncingCalendar}
-                      className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors disabled:opacity-50"
-                      title={
-                        myGcal(selectedTrip)?.syncedAt
-                          ? t('連動 Google Calendar（上次同步 {at}）', { at: format(parseISO(myGcal(selectedTrip)!.syncedAt), 'MM/dd HH:mm') })
-                          : t('連動 Google Calendar')
-                      }
-                    >
-                      {isSyncingCalendar ? <Loader2 size={16} className="animate-spin" /> : <CalendarCheck size={16} />}
-                    </button>
+                    <div>
+                      <button
+                        onClick={e => {
+                          const r = e.currentTarget.getBoundingClientRect();
+                          setMoreMenuAt(at => at ? null : { top: r.bottom + 6, right: window.innerWidth - r.right });
+                        }}
+                        className="p-1.5 bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors"
+                        title={t('其他功能')}
+                      >
+                        {isGeneratingPdf || isSyncingCalendar ? <Loader2 size={16} className="animate-spin" /> : <MoreHorizontal size={16} />}
+                      </button>
+                      {moreMenuAt && (
+                        <>
+                          <div className="fixed inset-0 z-20" onClick={() => setMoreMenuAt(null)} />
+                          <div style={moreMenuAt} className="fixed z-30 w-56 bg-white border border-zinc-200 rounded-xl shadow-lg py-1">
+                            <button
+                              onClick={() => { setMoreMenuAt(null); handleExportPDF(); }}
+                              disabled={isGeneratingPdf}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+                            >
+                              <Download size={15} className="text-zinc-400" />{t('匯出 PDF')}
+                            </button>
+                            <button
+                              onClick={() => { setMoreMenuAt(null); setCalendarPickerScope(''); }}
+                              disabled={isSyncingCalendar}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 text-left"
+                            >
+                              <CalendarCheck size={15} className="text-zinc-400 flex-shrink-0" />
+                              <span>
+                                {t('連動 Google Calendar')}
+                                {myGcal(selectedTrip)?.syncedAt && (
+                                  <span className="block text-[10px] text-zinc-400">
+                                    {t('上次同步 {at}', { at: format(parseISO(myGcal(selectedTrip)!.syncedAt), 'MM/dd HH:mm') })}
+                                  </span>
+                                )}
+                              </span>
+                            </button>
+                            <button
+                              onClick={() => { setMoreMenuAt(null); setLang(getLang() === 'zh' ? 'en' : 'zh'); }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50"
+                            >
+                              <Languages size={15} className="text-zinc-400" />{getLang() === 'zh' ? 'Switch to English' : '切換成中文'}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <button
                       onClick={() => { showTotalExpense ? setIsExpenseAnalysisOpen(true) : setShowTotalExpense(true); }}
                       className="bg-zinc-900 text-white px-3 py-1.5 rounded-lg shadow-sm active:scale-95 transition-all text-right"
@@ -4054,6 +4122,17 @@ export default function App() {
             initialExcluded={myGcal(selectedTrip)?.excluded ?? []}
             onClose={() => setCalendarPickerScope(null)}
             onSync={handleSyncCalendar}
+          />
+        )}
+
+        {isNotifyOpen && selectedTrip && currentUser && (
+          <NotifyMembersModal
+            trip={selectedTrip}
+            members={tripMembers}
+            me={currentUser.id}
+            nameOf={nameOf}
+            onClose={() => setIsNotifyOpen(false)}
+            onSend={handleNotifyMembers}
           />
         )}
 
