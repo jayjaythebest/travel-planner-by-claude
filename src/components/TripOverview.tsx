@@ -199,6 +199,7 @@ function Reservations({
   dates,
   members,
   onSetPartySize,
+  onMarkStopBooked,
   onToggle,
   onAddToPlan,
   onJumpToDay,
@@ -210,6 +211,7 @@ function Reservations({
   dates: string[];
   members: User[];
   onSetPartySize: (n: number) => Promise<void>;
+  onMarkStopBooked: (stopId: string) => Promise<void>;
   onToggle: (on: boolean) => Promise<void>;
   onAddToPlan: (idea: Idea) => Promise<void>;
   onJumpToDay: (date: string) => void;
@@ -234,6 +236,23 @@ function Reservations({
     .filter(isInReservations)
     .sort((a, b) => RES_ORDER.indexOf(shownStatus(a.reservation!)) - RES_ORDER.indexOf(shownStatus(b.reservation!)));
   const booked = rows.filter(i => i.reservation?.status === 'booked').length + stays.length;
+  // What the day-by-day plan still needs someone to book: stops on a bookable
+  // idea that is neither booked nor walk-in, and stops flagged needs_booking.
+  const byTitle = new Map(ideas.map(i => [i.title, i] as const));
+  const planDays = trip.suggested_plan?.days ?? [];
+  const todo = planDays.flatMap(d =>
+    d.stops.flatMap(s => {
+      const idea = s.idea_title ? byTitle.get(s.idea_title) : undefined;
+      if (idea && isBookable(idea)) {
+        const st = idea.reservation?.status;
+        return st === 'booked' || st === 'walk_in' ? [] : [{ date: d.date, stop: s, idea }];
+      }
+      return s.needs_booking && !s.booked ? [{ date: d.date, stop: s, idea: undefined }] : [];
+    }),
+  );
+  const onPlan = new Set(planDays.flatMap(d => d.stops.map(s => s.idea_title).filter(Boolean)));
+  /** A Muse lead for a place the current plan no longer visits. */
+  const offPlan = (i: Idea) => planDays.length > 0 && i.reservation?.status !== 'booked' && !onPlan.has(i.title) && !placedAs(i);
   const thread = trip.reservation_thread;
   const when = (iso?: string) => (iso ? format(parseISO(iso), 'M/d HH:mm') : '—');
 
@@ -260,6 +279,7 @@ function Reservations({
           <span className="truncate">{t('訂位與門票')}</span>
           <span className="normal-case tracking-normal text-[11px] font-medium text-zinc-300 truncate">
             · {t('已訂 {n}／{total}', { n: booked, total: rows.length + stays.length })}
+            {todo.length > 0 && <span className="text-amber-500"> · {t('待處理 {n}', { n: todo.length })}</span>}
           </span>
         </button>
         <div className="flex items-center gap-1 text-[10px] font-bold text-zinc-500 flex-shrink-0" title={t('訂位人數')}>
@@ -280,6 +300,55 @@ function Reservations({
       </div>
       {open && (
         <>
+          {todo.length > 0 && (
+            <div className="bg-amber-50/60 rounded-2xl border border-amber-200 divide-y divide-amber-100">
+              <div className="px-3 py-2 text-[10px] font-bold text-amber-700 uppercase tracking-widest flex items-center gap-1.5">
+                <AlertTriangle size={12} />{t('行程上還沒訂')}
+              </div>
+              {todo.map(({ date, stop, idea }) => {
+                const r = idea?.reservation;
+                const day = dates.indexOf(date) + 1;
+                const museSlot = r?.slots?.[0];
+                const otherDay = museSlot && museSlot.slice(0, 10) !== date;
+                const url = r && bookingUrl(r);
+                const status = !idea ? t('需自行預訂') : r ? t(RES_META[shownStatus(r)].label) : t('還沒問 Muse');
+                const note = r ? (getLang() === 'en' && r.note_en) || r.note : getLang() === 'en' ? stop.note : stop.note_zh || stop.note;
+                return (
+                  <div key={stop.id} className="p-3">
+                    <div className="flex items-center gap-2">
+                      {idea
+                        ? React.createElement(CATEGORY_META[idea.category].icon, { size: 13, className: 'text-zinc-400 flex-shrink-0' })
+                        : <Calendar size={13} className="text-zinc-400 flex-shrink-0" />}
+                      <span className="text-xs font-bold text-zinc-800 flex-1 min-w-0 truncate">{stop.activity}</span>
+                      <span className="text-[10px] font-medium px-1.5 py-0.5 rounded flex-shrink-0 bg-amber-100/80 text-amber-800">{status}</span>
+                    </div>
+                    <div className="pl-6 mt-1.5 space-y-1">
+                      <button onClick={() => onJumpToDay(date)} className="text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-md bg-white border border-zinc-100 text-zinc-600 hover:border-zinc-300">
+                        {day > 0 ? `Day ${day} · ` : ''}{format(parseISO(date), 'M/d')} {stop.start_time} →
+                      </button>
+                      {otherDay && (
+                        <div className="text-[10px] text-amber-700">{t('Muse 查到的是 {slot}，跟行程日期不同', { slot: fmtSlot(museSlot!) })}</div>
+                      )}
+                      {note && <div className="text-[10px] text-zinc-500 leading-snug">{note}</div>}
+                    </div>
+                    <div className="pl-6 mt-2 flex gap-3">
+                      {url && (
+                        <a href={url} target="_blank" rel="noopener noreferrer" className="text-[10px] font-bold text-zinc-900 hover:underline">
+                          <span className="flex items-center gap-1"><ExternalLink size={11} />{t('前往訂位')}</span>
+                        </a>
+                      )}
+                      <button
+                        onClick={() => (idea ? mark(idea, 'booked') : onMarkStopBooked(stop.id).catch(console.error))}
+                        className="text-[10px] font-bold text-emerald-600 hover:underline"
+                      >
+                        <span className="flex items-center gap-1"><Check size={11} />{t('標記已訂')}</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {stays.length > 0 && (
             <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
               {stays.map(a => (
@@ -313,6 +382,9 @@ function Reservations({
                     <div className="flex items-center gap-2">
                       {React.createElement(CATEGORY_META[i.category].icon, { size: 13, className: 'text-zinc-400 flex-shrink-0' })}
                       <span className="text-xs font-bold text-zinc-800 flex-1 min-w-0 truncate">{i.title}</span>
+                      {offPlan(i) && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded flex-shrink-0 bg-zinc-100 text-zinc-400">{t('不在行程上')}</span>
+                      )}
                       <span className={cn('text-[10px] font-medium px-1.5 py-0.5 rounded flex-shrink-0', meta.chip)}>
                         {t(meta.label)}
                       </span>
@@ -442,6 +514,7 @@ export function TripOverview({
   onCoverError,
   onAddBookingToPlan,
   onSetPartySize,
+  onMarkStopBooked,
   onSetMapsList,
   onSaveTransportPlan,
 }: {
@@ -463,6 +536,7 @@ export function TripOverview({
   onCoverError: () => void;
   onAddBookingToPlan: (idea: Idea) => Promise<void>;
   onSetPartySize: (n: number) => Promise<void>;
+  onMarkStopBooked: (stopId: string) => Promise<void>;
   onSetMapsList: (url: string | null) => Promise<void>;
   onSaveTransportPlan: (key: string, plan: TransportPlan) => Promise<void>;
 }) {
@@ -772,6 +846,7 @@ export function TripOverview({
               dates={dates}
               members={members}
               onSetPartySize={onSetPartySize}
+              onMarkStopBooked={onMarkStopBooked}
               onToggle={onToggleReservations}
               onAddToPlan={onAddBookingToPlan}
               onJumpToDay={onJumpToDay}

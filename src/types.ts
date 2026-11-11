@@ -156,6 +156,13 @@ export interface SuggestedStop {
   /** Title of the stash idea this stop places, so importing marks it scheduled. */
   idea_title?: string;
   imported?: boolean;
+  /**
+   * Something to book that has no stash idea (a driver and guide, a ferry), so
+   * it shows under 訂位與門票 until `booked`. Stops tied to a bookable idea
+   * follow that idea's reservation instead.
+   */
+  needs_booking?: boolean;
+  booked?: boolean;
 }
 
 export interface User {

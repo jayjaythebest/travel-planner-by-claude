@@ -1285,6 +1285,22 @@ export default function App() {
     setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, party_size: n } : tr)));
   };
 
+  /** A plan stop with no stash idea (a driver, a guide) that someone has now booked. */
+  const handleMarkStopBooked = async (stopId: string) => {
+    if (!selectedTrip?.suggested_plan) return;
+    const tripRef = selectedTrip;
+    const next = {
+      ...tripRef.suggested_plan!,
+      days: tripRef.suggested_plan!.days.map(d => ({
+        ...d,
+        stops: d.stops.map(s => (s.id === stopId ? { ...s, booked: true } : s)),
+      })),
+    };
+    await updateDoc(doc(db, 'trips', tripRef.documentId || tripRef.id), { suggested_plan: next });
+    setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, suggested_plan: next } : prev));
+    setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, suggested_plan: next } : tr)));
+  };
+
   /** Link a Google Maps list; a new link replaces the old one and everything the agent knew about it. */
   const handleSetMapsList = async (url: string | null) => {
     if (!selectedTrip) return;
@@ -2767,6 +2783,7 @@ export default function App() {
               onToggleReservations={handleToggleReservations}
               onAddBookingToPlan={handleAddBookingToPlan}
               onSetPartySize={handleSetPartySize}
+              onMarkStopBooked={handleMarkStopBooked}
               onSetMapsList={handleSetMapsList}
               onSaveTransportPlan={handleSaveTransportPlan}
               onCoverError={() => selectedTrip && loadCover(selectedTrip, true)}
