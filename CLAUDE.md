@@ -40,6 +40,10 @@ Required env vars:
 - `VITE_GOOGLE_OAUTH_CLIENT_ID` — OAuth 2.0 **Web application** client ID for the Google Calendar sync. Unlike the two above, a missing value is a supported state: `services/googleCalendar.ts` reads it into a const and never validates at module scope, so the app still loads and only the calendar button reports it is unconfigured. It is not a secret — it ships in the bundle, and what protects it is the client's authorized-JavaScript-origins list, which must contain `https://travel-planner-cf0d4.web.app` for production and `http://localhost:5173` for dev
 - SMTP vars (`SMTP_USER`, `SMTP_PASS`, `SMTP_HOST`, `SMTP_PORT`) — see `.env.example`
 
+**Access is an allowlist (2026-11-15).** Google sign-in admits any Google account, so `firestore.rules` `signedIn()` also requires a verified email listed in Firestore `config/access.emails` (lowercase; not readable by clients; edit it in the Firebase console). A new traveller who is not on it gets 讀取使用者資料失敗 on login — add their email first. The reservation-agent uses a service account and is not affected.
+
+**`VITE_GEMINI_API_KEY` is this app's own browser key** (GCP `gen-lang-client-0478108250`, "travel-planner browser (referrer-locked)"), restricted to the Gemini API and to the web.app / firebaseapp.com / localhost referrers. Anything in a `VITE_*` var ships in the public bundle, so never put a shared or server key here. The Maps key is referrer-locked the same way. A new origin (custom domain, Capacitor scheme) must be added to both keys' allowed referrers or calls return 403.
+
 Local:
 ```bash
 npm install
