@@ -13,8 +13,19 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // Signed in AND on the allowlist. Google sign-in is open to every Google
+    // account, so request.auth alone admitted anyone on the internet — and the
+    // content collections below have list rules that do not depend on the
+    // document, so one signed-in stranger could page through every trip's
+    // activities, expenses and lodging. The list lives in config/access
+    // (field `emails`, lowercase), which no client can read or write; edit it
+    // in the Firebase console to add a traveller. Kept out of this file so
+    // friends' addresses are not published with the repo.
     function signedIn() {
-      return request.auth != null;
+      return request.auth != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower()
+             in get(/databases/$(database)/documents/config/access).data.emails;
     }
 
     // A role the client cannot assert about itself — it is read from the
@@ -96,11 +107,11 @@ service cloud.firestore {
     // every legacy row while appearing to work on new ones, which is worse than
     // an honest boundary one level up.
     //
-    // What this does and does not buy: the open internet is shut out entirely,
-    // which was the actual hole. Between the handful of people who can sign in,
-    // it is not a boundary — any of them could read another's activities by
-    // guessing a trip_id. Closing that means backfilling trip_id to document
-    // ids first, then tightening these four blocks.
+    // What this does and does not buy: only allowlisted travellers get in (see
+    // signedIn()). Among them it is not a boundary — these rules allow listing
+    // a whole collection, so any of them could read every trip's rows. Closing
+    // that means backfilling trip_id to document ids first, then tightening
+    // these blocks.
     match /activities/{doc}     { allow read, write: if signedIn(); }
     match /expenses/{doc}       { allow read, write: if signedIn(); }
     match /accommodations/{doc} { allow read, write: if signedIn(); }
