@@ -18,6 +18,7 @@ import {
   Luggage,
   TrainFront,
   ExternalLink,
+  FileText,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { format, parseISO, differenceInDays } from 'date-fns';
@@ -835,6 +836,27 @@ export function TripOverview({
       </div>
 
       <ForceOpen.Provider value={true}>
+        {tab === 'bookings' && (trip.documents?.length ?? 0) > 0 && (
+          <div className="bg-white rounded-2xl border border-zinc-200 p-3 mb-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-zinc-500 flex items-center gap-1.5"><FileText size={12} />{t('文件')}</span>
+              {trip.drive_folder?.url && (
+                <a href={trip.drive_folder.url} target="_blank" rel="noopener noreferrer"
+                  className="text-[11px] font-bold text-sky-600 hover:underline flex items-center gap-1">
+                  {t('在 Google Drive 開啟資料夾')} <ExternalLink size={10} />
+                </a>
+              )}
+            </div>
+            {[...trip.documents!].sort((a, b) => a.date.localeCompare(b.date)).map(d => (
+              <a key={d.id} href={d.url} target="_blank" rel="noopener noreferrer"
+                className="flex items-center gap-2 text-xs text-zinc-700 hover:text-sky-700 py-0.5">
+                <span className="text-[10px] text-zinc-400 tabular-nums w-10 flex-shrink-0">{format(parseISO(d.date), 'M/d')}</span>
+                <span className="truncate flex-1">{d.title}{d.passenger && <span className="text-zinc-400"> · {d.passenger}</span>}</span>
+                {d.confirmation && <span className="text-[10px] text-zinc-400 flex-shrink-0">#{d.confirmation}</span>}
+              </a>
+            ))}
+          </div>
+        )}
         {tab === 'bookings' && (
           ideas.some(isBookable) || accommodations.some(a => a.confirmation) ? (
             <>

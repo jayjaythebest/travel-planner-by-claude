@@ -42,7 +42,8 @@ import {
   Languages
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { cn, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, freeWindows, fitsWindow, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
+import { DocLinks } from './components/DocLinks';
+import { cn, docsForActivity, docsForStay, COUNTRY_LIST, CURRENCY_OPTIONS, convertAmount, totalsCurrency, inTripYear, freeWindows, fitsWindow, flagUrl, flightNoOf, isOutboundDate, TIMEZONE_MAP, TIME_ZONE_OPTIONS, timeZoneOptionsWith, isValidTimeZone } from './utils';
 import { Trip, Activity, Expense, Accommodation, ChecklistItem, Idea, User, TransferEstimate, TransportPlan, NotifyRequest } from './types';
 import { geminiService } from './services/geminiService';
 import { auth, db, googleProvider } from './services/firebase';
@@ -2819,6 +2820,7 @@ export default function App() {
                       <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
                       <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}{acc.confirmation && ` · #${acc.confirmation}`}</div>
                     </div>
+                    <DocLinks docs={docsForStay(selectedTrip?.documents, acc)} className="flex-shrink-0" />
                     {acc.map_url && (
                       <a href={acc.map_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                         className="text-xs font-bold text-emerald-500 hover:underline flex items-center gap-1 flex-shrink-0">
@@ -2841,6 +2843,7 @@ export default function App() {
                       <div className="text-sm font-bold text-zinc-900 truncate">{acc.name}</div>
                       <div className="text-[10px] text-zinc-400">{acc.check_in} → {acc.check_out}{acc.confirmation && ` · #${acc.confirmation}`}</div>
                     </div>
+                    <DocLinks docs={docsForStay(selectedTrip?.documents, acc)} className="flex-shrink-0" />
                     {acc.map_url && (
                       <a href={acc.map_url} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}
                         className="text-xs font-bold text-amber-500 hover:underline flex items-center gap-1 flex-shrink-0">
@@ -3188,6 +3191,7 @@ export default function App() {
                               <span className="text-[10px] text-zinc-400 font-medium">{activity.date}</span>
                               <span className="text-sm font-bold text-zinc-800">{activity.end_time}</span>
                             </div>
+                            <DocLinks docs={docsForActivity(selectedTrip?.documents, activity)} className="mt-2" />
                             {tripMembers.length > 1 && (
                               <div className="flex items-center justify-between gap-2 mt-3 pt-2.5 border-t border-dashed border-zinc-200">
                                 <span className="text-[10px] text-zinc-500 truncate">
@@ -3265,13 +3269,14 @@ export default function App() {
                               {activity.note && (
                                 <p className="text-xs text-stone-500 mb-2.5 leading-relaxed whitespace-pre-line">{activity.note}</p>
                               )}
-                              {activity.map_url && (
-                                <div className="flex justify-end">
-                                  <a href={activity.map_url} target="_blank" rel="noopener noreferrer"
+                              {(activity.map_url || docsForActivity(selectedTrip?.documents, activity).length > 0) && (
+                                <div className="flex justify-end items-center gap-3">
+                                  <DocLinks docs={docsForActivity(selectedTrip?.documents, activity)} />
+                                  {activity.map_url && <a href={activity.map_url} target="_blank" rel="noopener noreferrer"
                                     onClick={(e) => e.stopPropagation()}
                                     className="flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700 hover:underline">
                                     <MapPin size={11} /> {t('查看地圖')}
-                                  </a>
+                                  </a>}
                                 </div>
                               )}
                               {renderAiAdvice()}

@@ -5,6 +5,28 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+type DocLike = { date: string; kind: string; confirmation: string };
+
+/**
+ * The trip's Drive documents that belong on this activity's card: the booking
+ * code appears in its note (how the agent writes every imported booking), or,
+ * for a flight or an "A → B" leg typed in by hand, the same kind on the same day.
+ */
+export function docsForActivity<D extends DocLike>(
+  docs: D[] | undefined,
+  a: { date: string; note?: string; activity: string; is_flight?: boolean },
+): D[] {
+  return (docs ?? []).filter(d =>
+    (d.confirmation && (a.note ?? '').includes(d.confirmation))
+    || (d.date === a.date && ((d.kind === 'flight' && a.is_flight) || (d.kind === 'train' && !a.is_flight && /→|->/.test(a.activity)))),
+  );
+}
+
+export function docsForStay<D extends DocLike>(docs: D[] | undefined, s: { check_in: string; confirmation?: string }): D[] {
+  return (docs ?? []).filter(d =>
+    (d.confirmation && d.confirmation === s.confirmation) || (d.kind === 'hotel' && d.date === s.check_in));
+}
+
 export type Destination = {
   /** The exact string stored in `trip.country`. Changing one orphans its trips. */
   label: string;

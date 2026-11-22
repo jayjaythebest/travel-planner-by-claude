@@ -66,6 +66,14 @@ export interface Trip {
    * 10 minutes: places new to it become stash ideas, and the bookable ones go
    * to Muse. The app writes only `url`; the rest is the agent's.
    */
+  /**
+   * Ticket, boarding-pass and booking PDFs the reservation-agent found in
+   * Gmail and uploaded to Drive (Travel/<trip name>/, shared read-only with
+   * the members). Written only by the agent; the app links each one from the
+   * card it belongs to (`docsForActivity`, `docsForStay`).
+   */
+  documents?: TripDocument[];
+  drive_folder?: { id: string; url: string; shared?: string[] };
   maps_list?: {
     url: string;
     title?: string;
@@ -222,6 +230,19 @@ export interface Activity {
   transfer_estimates?: Partial<Record<'arrive' | 'depart', { acc_id: string; data: TransferEstimate }>>;
   /** Set on an activity created from a transfer card: "<flight id>:arrive|depart". */
   transfer_of?: string;
+}
+
+export interface TripDocument {
+  id: string;
+  url: string;
+  /** The attachment's own filename. */
+  name: string;
+  title: string;
+  kind: 'flight' | 'train' | 'hotel' | 'restaurant' | 'ticket' | 'tour' | 'other';
+  /** First travel date on the document: departure, check-in, entry. */
+  date: string;
+  confirmation: string;
+  passenger: string;
 }
 
 export interface TransferEstimate {

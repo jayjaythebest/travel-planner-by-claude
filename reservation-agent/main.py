@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import base64
 import html
+import io
 import json
 import os
 import re
@@ -53,6 +54,7 @@ from google.genai import types as gtypes
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
 
 FIRESTORE_PROJECT = os.environ.get("FIRESTORE_PROJECT", "travel-planner-cf0d4")
 MAILBOX = os.environ.get("MAILBOX", "jj940170@gmail.com")
@@ -77,6 +79,8 @@ def gemini() -> genai.Client:
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.readonly",
+    # Only files and folders the agent itself creates: the ticket PDFs.
+    "https://www.googleapis.com/auth/drive.file",
 ]
 TOKEN_FILE = Path(__file__).parent / "token_muse.json"
 
@@ -293,13 +297,21 @@ def now_iso() -> str:
 
 
 # ── Gmail ────────────────────────────────────────────────────────────────────
-def gmail_service():
+def google_creds() -> Credentials:
     """GMAIL_TOKEN (Secret Manager, on Cloud Run) or token_muse.json (local)."""
     raw = os.environ.get("GMAIL_TOKEN") or TOKEN_FILE.read_text(encoding="utf-8")
     creds = Credentials.from_authorized_user_info(json.loads(raw.lstrip(chr(0xFEFF))), SCOPES)
     if not creds.valid:
         creds.refresh(Request())
-    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+    return creds
+
+
+def gmail_service():
+    return build("gmail", "v1", credentials=google_creds(), cache_discovery=False)
+
+
+def drive_service():
+    return build("drive", "v3", credentials=google_creds(), cache_discovery=False)
 
 
 def header(msg: dict, name: str) -> str:
@@ -1424,8 +1436,12 @@ TRAIN_QUERY = (
 TRAIN_STATE = ("agent_state", "train_mail")
 
 
-def pdf_attachments(gmail, msg: dict) -> list[bytes]:
-    """The tickets: Renfe's email body has only the departure, the PDF has every leg's times."""
+# Boilerplate that rides along with tickets (Iberia's "Condiciones del Transporte").
+BOILERPLATE_PDF = re.compile(r"condici|conditions|terms|t&c|agb|privacy|privacidad", re.I)
+
+
+def named_pdfs(gmail, msg: dict, limit: int = 4) -> list[tuple[str, bytes]]:
+    """(filename, bytes) of the email's PDF attachments, boilerplate left out."""
     out = []
 
     def walk(p):
@@ -1434,11 +1450,16 @@ def pdf_attachments(gmail, msg: dict) -> list[bytes]:
             yield from walk(c)
 
     for p in walk(msg["payload"]):
-        aid = p.get("body", {}).get("attachmentId")
-        if aid and (p.get("filename") or "").lower().endswith(".pdf") and len(out) < 2:
+        aid, name = p.get("body", {}).get("attachmentId"), p.get("filename") or ""
+        if aid and name.lower().endswith(".pdf") and not BOILERPLATE_PDF.search(name) and len(out) < limit:
             att = gmail.users().messages().attachments().get(userId="me", messageId=msg["id"], id=aid).execute()
-            out.append(base64.urlsafe_b64decode(att["data"]))
+            out.append((name, base64.urlsafe_b64decode(att["data"])))
     return out
+
+
+def pdf_attachments(gmail, msg: dict) -> list[bytes]:
+    """The tickets: Renfe's email body has only the departure, the PDF has every leg's times."""
+    return [data for _, data in named_pdfs(gmail, msg, 2)]
 
 
 def parse_train_email(subject: str, sender: str, text: str, pdfs: list[bytes]) -> dict | None:
@@ -1615,6 +1636,181 @@ def import_trains(db, gmail, me: str, today: str, dry: bool) -> None:
         state_ref.set({
             "processed": sorted(processed)[-3000:],
             "trains": {k: v for k, v in trains.items() if v["date"] >= today},
+            "updated_at": now_iso(),
+        })
+
+
+# ── Ticket PDFs → Google Drive ───────────────────────────────────────────────
+DOC_QUERY = (
+    'newer_than:180d has:attachment filename:pdf -subject:"muse定位串" -subject:"muse更新" '
+    "{subject:(ticket OR tickets OR billete OR billetes OR boarding OR itinerary OR itinerario OR e-ticket "
+    "OR eticket OR booking OR reservation OR reserva OR confirmation OR confirmacion OR confirmación "
+    "OR entradas OR 機票 OR 車票 OR 門票 OR 訂位 OR 訂房 OR 行程) "
+    "from:(renfe.es OR iryo.eu OR ouigo.com OR trainline.com OR omio.com OR iberia.es OR iberia.com "
+    "OR vueling.com OR ryanair.com OR aireuropa.com OR evaair.com OR china-airlines.com OR starlux-airlines.com "
+    "OR united.com OR delta.com OR aa.com OR tap.pt OR booking.com OR airbnb.com OR expedia.com OR agoda.com "
+    "OR hotels.com OR getyourguide.com OR tiqets.com OR klook.com OR kkday.com OR viator.com)}"
+)
+DOC_STATE = ("agent_state", "drive_docs")
+DOC_KINDS = ("flight", "train", "hotel", "restaurant", "ticket", "tour", "other")
+MAX_DOCS_PER_RUN = 12  # each is a Gemini call over the PDF plus an upload; the run has 300 s
+
+
+def classify_document(subject: str, sender: str, text: str, pdfs: list[bytes]) -> dict | None:
+    """Is this a ticket, boarding pass, itinerary or booking voucher, and for which date."""
+    text = re.sub(r"\[\]\(https?://[^)]*\)|https?://\S+", "", text)
+    text = re.sub(r"[|\s]*\n[|\s]*\n+", "\n", text)
+    prompt = f"""這封信附的 PDF 是不是旅行要用的文件：機票／電子機票收據、登機證、火車票、住宿確認單、餐廳訂位或門票、導覽憑證。
+發票、收據以外沒有行程資訊的、行銷、條款、會員資料都算 is_travel=false。
+
+- is_travel：true／false
+- kind：flight / train / hotel / restaurant / ticket / tour / other
+- date：YYYY-MM-DD，文件上第一個行程日期（出發日、入住日、入場日），用文件上的當地日期
+- title：給人看的短名稱，例如 "Iberia MAD→BCN"、"Renfe Barcelona→Granada"、"Hotel Alfonso XIII"
+- confirmation：訂位代號／確認碼／locator，沒有就空字串
+- passenger：文件上的旅客姓名，只有一位時填，否則空字串
+
+寄件者：{sender}
+標題：{subject}
+內文：
+\"\"\"
+{text[:6000]}
+\"\"\""""
+    client = gemini()
+    res = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt, *(gtypes.Part.from_bytes(data=p, mime_type="application/pdf") for p in pdfs)],
+        config=gtypes.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema={"type": "OBJECT", "properties": {
+                "is_travel": {"type": "BOOLEAN"},
+                **{k: {"type": "STRING"} for k in ("kind", "date", "title", "confirmation", "passenger")}},
+                "required": ["is_travel"]},
+        ),
+    )
+    r = json.loads(res.text or "{}")
+    if not r.get("is_travel") or not re.match(r"^\d{4}-\d{2}-\d{2}$", str(r.get("date") or "")):
+        return None
+    out = {k: str(r.get(k) or "").strip() for k in ("kind", "date", "title", "confirmation", "passenger")}
+    if out["kind"] not in DOC_KINDS:
+        out["kind"] = "other"
+    out["title"] = out["title"] or subject[:60]
+    return out
+
+
+def drive_folder(drive, name: str, parent: str | None) -> str:
+    body = {"name": name, "mimeType": "application/vnd.google-apps.folder", **({"parents": [parent]} if parent else {})}
+    return drive.files().create(body=body, fields="id").execute()["id"]
+
+
+def trip_folder(db, drive, trip_ref, trip: dict, root: str, dry: bool) -> dict | None:
+    """
+    The trip's Drive folder, made on first use and shared read-only with every
+    member, so the link in the app opens for whoever taps it. Members added
+    later are shared on the next run.
+    """
+    folder = dict(trip.get("drive_folder") or {})
+    members = [trip.get("owner_id"), *(trip.get("shared_with") or [])]
+    emails = sorted({(db.collection("users").document(u).get().to_dict() or {}).get("email", "").lower()
+                     for u in members if u} - {""})
+    if dry:
+        return folder or {"id": "(dry)", "url": "", "shared": []}
+    if not folder.get("id"):
+        fid = drive_folder(drive, trip.get("name") or trip_ref.id, root)
+        folder = {"id": fid, "url": f"https://drive.google.com/drive/folders/{fid}", "shared": []}
+    shared = set(folder.get("shared") or [])
+    for e in emails:
+        if e in shared:
+            continue
+        try:
+            drive.permissions().create(fileId=folder["id"], sendNotificationEmail=False,
+                                       body={"type": "user", "role": "reader", "emailAddress": e}).execute()
+            shared.add(e)
+        except Exception as err:  # the owner's own address, or one Google will not share with silently
+            print(f"    share {folder['id']} with a member failed: {err!r}")
+            if "owner" in str(err).lower():
+                shared.add(e)
+    folder["shared"] = sorted(shared)
+    trip_ref.update({"drive_folder": folder})
+    return folder
+
+
+def import_documents(db, gmail, drive, me: str, today: str, dry: bool) -> None:
+    """
+    Ticket, boarding-pass and booking PDFs from Gmail -> Drive Travel/<trip>/,
+    listed on the trip as `documents` so the app can link each one from its
+    card. The agent can only see what it created (drive.file), so it keeps its
+    own Travel folder. A document for a date no trip covers yet waits in
+    `pending` and is placed once that trip exists.
+    """
+    state_ref = db.collection(DOC_STATE[0]).document(DOC_STATE[1])
+    state = state_ref.get().to_dict() or {}
+    processed = set(state.get("processed") or [])
+    pending: dict[str, dict] = dict(state.get("pending") or {})
+    root = state.get("root_id")
+    if not root and not dry:
+        root = drive_folder(drive, "Travel", None)
+        print(f"  created Drive folder Travel ({root})")
+
+    ids = []
+    req = gmail.users().messages().list(userId="me", q=DOC_QUERY, maxResults=100)
+    while req is not None and len(ids) < 300:
+        page = req.execute()
+        ids += [m["id"] for m in page.get("messages", [])]
+        req = gmail.users().messages().list_next(req, page)
+    for mid in [m for m in ids if m not in processed][:MAX_DOCS_PER_RUN]:
+        msg = gmail.users().messages().get(userId="me", id=mid, format="full").execute()
+        processed.add(mid)
+        if header(msg, REQ_HEADER):
+            continue
+        pdfs = named_pdfs(gmail, msg)
+        if not pdfs:
+            continue
+        d = classify_document(header(msg, "Subject"), header(msg, "From"), plain_text(msg["payload"]),
+                              [data for _, data in pdfs])
+        print(f"  doc mail {mid}: {[n for n, _ in pdfs]} -> "
+              + (f"{d['kind']} {d['date']} {d['title']} #{d['confirmation']}" if d else "not a travel document"))
+        if d and d["date"] >= today:
+            pending[mid] = d
+
+    trips = [(ref, ref.to_dict()) for ref in db.collection("trips").stream()]
+    trips = [(ref, t) for ref, t in trips if (t.get("owner_id") == me or me in (t.get("shared_with") or []))
+             and t.get("start_date") and (t.get("end_date") or "") >= today]
+    for mid, d in sorted(pending.items(), key=lambda kv: kv[1]["date"]):
+        hit = next(((ref, t) for ref, t in trips if t["start_date"] <= d["date"] <= t["end_date"]), None)
+        if hit is None:
+            continue
+        trip_ref, trip = hit
+        print(f"  → {trip.get('name')}: {d['title']}")
+        folder = trip_folder(db, drive, trip_ref.reference, trip, root, dry)
+        trip["drive_folder"] = folder  # the next document for this trip goes in the same folder
+        msg =gmail.users().messages().get(userId="me", id=mid, format="full").execute()
+        docs = list(trip.get("documents") or [])
+        have = {x.get("source") for x in docs}
+        for name, data in named_pdfs(gmail, msg):
+            if f"{mid}/{name}" in have:
+                continue
+            fname = f"{d['date']} {d['title']} - {name}"
+            print(f"    upload {fname}")
+            if dry:
+                continue
+            f = drive.files().create(
+                body={"name": fname, "parents": [folder["id"]]},
+                media_body=MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf"),
+                fields="id,webViewLink").execute()
+            docs.append({"id": f["id"], "url": f["webViewLink"], "name": name, "title": d["title"],
+                         "kind": d["kind"], "date": d["date"], "confirmation": d["confirmation"],
+                         "passenger": d["passenger"], "source": f"{mid}/{name}", "added_at": now_iso()})
+        if not dry:
+            trip_ref.reference.update({"documents": docs})
+            trip["documents"] = docs
+            del pending[mid]
+
+    if not dry:
+        state_ref.set({
+            "root_id": root,
+            "processed": sorted(processed)[-3000:],
+            "pending": {k: v for k, v in pending.items() if v["date"] >= today},
             "updated_at": now_iso(),
         })
 
@@ -2087,6 +2283,11 @@ def main() -> None:
                 import_trains(db, gmail, me, today, args.dry_run)
         except Exception as e:
             print(f"trains ERROR: {e!r}")
+        try:
+            if me:
+                import_documents(db, gmail, drive_service(), me, today, args.dry_run)
+        except Exception as e:
+            print(f"documents ERROR: {e!r}")
         try:
             if me:
                 import_muse_updates(db, gmail, me, today, args.dry_run)
