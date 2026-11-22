@@ -46,11 +46,11 @@ if (-not (Test-Path "token_muse.json")) { Write-Error "token_muse.json missing -
 Write-Host "-> Storing Gmail token in Secret Manager ..."
 Set-Secret "travel-reservations-gmail-token" (Get-Content "token_muse.json" -Raw)
 
-# Same Gemini key the web app uses (shared with cash-expense-bot - see CLAUDE.md).
-$GeminiKey = (Get-Content "..\.env" | Where-Object { $_ -match '^VITE_GEMINI_API_KEY=' }) -replace '^VITE_GEMINI_API_KEY=', ''
-if (-not $GeminiKey) { Write-Error "VITE_GEMINI_API_KEY not found in ..\.env"; exit 1 }
-Write-Host "-> Storing Gemini key in Secret Manager ..."
-Set-Secret "travel-reservations-gemini-key" $GeminiKey.Trim()
+# The Gemini key is the "shared server key", set in Secret Manager when it is
+# rotated (see C:\Projects\.claude\CLAUDE.md). Never copy it from ..\.env: that
+# VITE_ key is the browser's referrer-locked one and rejects server calls.
+$null = gcloud secrets versions access latest --secret=travel-reservations-gemini-key --project=$Project 2>$null
+if ($LASTEXITCODE -ne 0) { Write-Error "secret travel-reservations-gemini-key missing - add the shared server key"; exit 1 }
 
 # Image
 $null = gcloud artifacts repositories describe travel-planner --location=$Region --project=$Project 2>$null
