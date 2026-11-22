@@ -1417,6 +1417,208 @@ def import_bookings(db, gmail, me: str, today: str, dry: bool) -> None:
         })
 
 
+TRAIN_QUERY = (
+    "newer_than:180d from:(renfe.es OR renfe.com OR iryo.eu OR ouigo.com OR trainline.com OR omio.com "
+    "OR sncf-connect.com OR italotreno.com OR trenitalia.com OR thetrainline.com)"
+)
+TRAIN_STATE = ("agent_state", "train_mail")
+
+
+def pdf_attachments(gmail, msg: dict) -> list[bytes]:
+    """The tickets: Renfe's email body has only the departure, the PDF has every leg's times."""
+    out = []
+
+    def walk(p):
+        yield p
+        for c in p.get("parts", []) or []:
+            yield from walk(c)
+
+    for p in walk(msg["payload"]):
+        aid = p.get("body", {}).get("attachmentId")
+        if aid and (p.get("filename") or "").lower().endswith(".pdf") and len(out) < 2:
+            att = gmail.users().messages().attachments().get(userId="me", messageId=msg["id"], id=aid).execute()
+            out.append(base64.urlsafe_b64decode(att["data"]))
+    return out
+
+
+def parse_train_email(subject: str, sender: str, text: str, pdfs: list[bytes]) -> dict | None:
+    """One Gemini call per email, reading the PDF tickets alongside the body."""
+    text = re.sub(r"\[\]\(https?://[^)]*\)|https?://\S+", "", text)
+    text = re.sub(r"[|\s]*\n[|\s]*\n+", "\n", text)
+    prompt = f"""判斷這封信是不是火車票的購買確認、變更或取消通知。行銷信、電子報、會員點數、還沒付款的訂單都算 other。
+附件 PDF 是車票本身，各段的出發與抵達時間以 PDF 為準。
+
+- kind：confirmation（購票）／modification（改票）／cancellation（取消、退票）／other
+- origin_city / destination_city：整趟的起點與終點城市名，用常見英文或當地拼法（"Barcelona"、"Granada"、"Sevilla"），不要站名
+- date：YYYY-MM-DD，第一段出發的當地日期
+- segments：每一段車，依序。from_station、to_station 照票面站名；depart、arrive 為 HH:MM 24 小時制當地時間，不要換算時區；train 為車種加車次（"AVE 03092"）
+- party_size：票數／乘客數
+- confirmation：Localizador／訂位代號，沒有就空字串
+來回票只填去程那一段的整趟；回程另開一筆放進 return_trip，欄位相同（沒有就省略）。
+
+寄件者：{sender}
+標題：{subject}
+內文：
+\"\"\"
+{text[:8000]}
+\"\"\""""
+    seg = {"type": "OBJECT", "properties": {k: {"type": "STRING"} for k in
+                                            ("from_station", "to_station", "depart", "arrive", "train")}}
+    trip = {"type": "OBJECT", "properties": {
+        "origin_city": {"type": "STRING"}, "destination_city": {"type": "STRING"}, "date": {"type": "STRING"},
+        "segments": {"type": "ARRAY", "items": seg}}}
+    schema = {"type": "OBJECT", "properties": {
+        "kind": {"type": "STRING"}, "party_size": {"type": "NUMBER"}, "confirmation": {"type": "STRING"},
+        **trip["properties"], "return_trip": trip}, "required": ["kind"]}
+    client = gemini()
+    res = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt, *(gtypes.Part.from_bytes(data=p, mime_type="application/pdf") for p in pdfs)],
+        config=gtypes.GenerateContentConfig(response_mime_type="application/json", response_schema=schema),
+    )
+    r = json.loads(res.text or "{}")
+    if r.get("kind") not in HOTEL_KINDS:
+        return None
+
+    def leg(x: dict) -> dict | None:
+        segs = []
+        for s in x.get("segments") or []:
+            times = [re.match(r"^(\d{1,2}):(\d{2})", str(s.get(k) or "")) for k in ("depart", "arrive")]
+            segs.append({**{k: str(s.get(k) or "").strip() for k in ("from_station", "to_station", "train")},
+                         **{k: f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
+                            for k, m in zip(("depart", "arrive"), times)}})
+        if not (x.get("origin_city") and x.get("destination_city")
+                and re.match(r"^\d{4}-\d{2}-\d{2}$", str(x.get("date") or "")) and segs and segs[0]["depart"]):
+            return None
+        return {"origin": str(x["origin_city"]).strip(), "destination": str(x["destination_city"]).strip(),
+                "date": x["date"], "segments": segs, "depart": segs[0]["depart"], "arrive": segs[-1]["arrive"]}
+
+    out = leg(r)
+    if out is None:
+        return None
+    base = {"kind": r["kind"], "party_size": int(r.get("party_size") or 0),
+            "confirmation": str(r.get("confirmation") or "").strip()}
+    back = leg(r.get("return_trip") or {})
+    return {**base, **out, "return_trip": {**base, **back} if back else None}
+
+
+def train_activity_note(t: dict, trip: dict) -> str:
+    segs = t["segments"]
+    route = " → ".join([f"{segs[0]['from_station']} {segs[0]['depart']}"] + [
+        f"{s['to_station']} {s['arrive']}" + (f"（轉車，{segs[i + 1]['depart']} 開）" if i + 1 < len(segs) else "")
+        for i, s in enumerate(segs)])
+    trains = " / ".join(s["train"] for s in segs if s["train"])
+    want = party_size(trip)
+    people = t["party_size"]
+    parts = [route, trains, f"確認碼：{t['confirmation']}" if t["confirmation"] else "",
+             f"{people} 人" if people else "", f"⚠ 只買了 {people} 張，行程是 {want} 人" if 0 < people < want else "",
+             "（Gmail 自動匯入）"]
+    return " · ".join(p for p in parts if p)
+
+
+def place_train(db, child_id: str, trip: dict, t: dict, dry: bool) -> str | None:
+    """
+    One ticket -> one "A → B" activity, the form travel_legs() and the app's
+    TransportPlanner read as the day's move. A leg already on that day (typed
+    in, or added from a transport suggestion) is moved to the booked times
+    rather than duplicated.
+    """
+    acts = {d.id: d.to_dict() for d in db.collection("activities").where("trip_id", "==", child_id).stream()}
+    act_id = t.get("act_id") if t.get("act_id") in acts else None
+    if act_id is None:
+        ends = (norm_name(fold(t["origin"])), norm_name(fold(t["destination"])))
+        act_id = next((i for i, a in acts.items() if a.get("date") == t["date"] and not a.get("is_flight")
+                       and LEG_RE.search(a.get("activity", ""))
+                       and any(e and e[:5] in norm_name(fold(a.get("activity", ""))) for e in ends)), None)
+    mine = acts.get(act_id) or {}
+
+    if t["kind"] == "cancellation":
+        print(f"    cancelled: {t['origin']} → {t['destination']} {t['date']} #{t['confirmation']}")
+        if act_id and mine.get("source") == "gmail" and not dry:
+            db.collection("activities").document(act_id).delete()
+        return None
+
+    fields = {"trip_id": child_id, "date": t["date"], "start_time": t["depart"], "end_time": t["arrive"],
+              "activity": f"{t['origin']} → {t['destination']}（火車）", "note": train_activity_note(t, trip),
+              "source": "gmail"}
+    if act_id and mine.get("source") != "gmail":
+        fields = {"date": t["date"], "start_time": t["depart"], "end_time": t["arrive"]}
+        if t["confirmation"] and t["confirmation"] not in (mine.get("note") or ""):
+            fields["note"] = " · ".join(p for p in (mine.get("note"), train_activity_note(t, trip)) if p)
+    print(f"    {'updating' if act_id else 'adding'} {t['origin']} → {t['destination']} {t['date']} "
+          f"{t['depart']}–{t['arrive']} #{t['confirmation']}")
+    if dry:
+        return act_id
+    if act_id:
+        db.collection("activities").document(act_id).update(fields)
+        return act_id
+    ref = db.collection("activities").document()
+    ref.set({**fields, "id": ref.id, "is_flight": False, "travel_mode": "transit",
+             "map_url": "https://www.google.com/maps/search/?api=1&query="
+             + quote(t["segments"][0]["from_station"] or t["origin"], safe="")})
+    return ref.id
+
+
+def import_trains(db, gmail, me: str, today: str, dry: bool) -> None:
+    """
+    Train ticket emails -> "A → B" activities, the way import_bookings does
+    tables. Keyed by the booking code plus date, so a change email moves its
+    own leg and a return ticket's two legs stay apart.
+    """
+    state_ref = db.collection(TRAIN_STATE[0]).document(TRAIN_STATE[1])
+    state = state_ref.get().to_dict() or {}
+    processed = set(state.get("processed") or [])
+    trains: dict[str, dict] = dict(state.get("trains") or {})
+
+    ids = []
+    req = gmail.users().messages().list(userId="me", q=TRAIN_QUERY, maxResults=100)
+    while req is not None and len(ids) < 300:
+        page = req.execute()
+        ids += [m["id"] for m in page.get("messages", [])]
+        req = gmail.users().messages().list_next(req, page)
+    for mid in [m for m in ids if m not in processed][:MAX_NEW_PER_RUN]:
+        msg = gmail.users().messages().get(userId="me", id=mid, format="full").execute()
+        processed.add(mid)
+        t = parse_train_email(header(msg, "Subject"), header(msg, "From"), plain_text(msg["payload"]),
+                              pdf_attachments(gmail, msg))
+        if not t:
+            continue
+        sent = int(msg.get("internalDate", 0))
+        for leg in [t, t.pop("return_trip")]:
+            if not leg:
+                continue
+            # A change keeps the code but may move the date: it replaces every leg of that code going the same way.
+            key = f"{leg['confirmation'] or norm_name(leg['origin'] + leg['destination'])}|{norm_name(fold(leg['origin']))}"
+            prev = trains.get(key) or {}
+            if sent < int(prev.get("sent", 0)):
+                continue
+            trains[key] = {**leg, "trip": prev.get("trip"), "act_id": prev.get("act_id"), "dirty": True, "sent": sent}
+            print(f"  train mail {mid}: {leg['kind']} {leg['origin']} → {leg['destination']} {leg['date']} "
+                  f"{leg['depart']}–{leg['arrive']} x{leg['party_size']} #{leg['confirmation']}")
+
+    trips = my_trips(db, me, today)
+    for key, t in sorted(trains.items(), key=lambda kv: kv[1]["sent"]):
+        if not t.get("dirty") or t["date"] < today:
+            continue
+        hit = next(((cid, tr) for cid, tr in trips if tr["start_date"] <= t["date"] <= tr["end_date"]), None)
+        if hit is None:
+            continue
+        child_id, trip = hit
+        print(f"  → {trip.get('name')}")
+        if t.get("act_id") and (t.get("trip") != child_id) and t.get("trip") and not dry:
+            db.collection("activities").document(t["act_id"]).delete()
+            t["act_id"] = None
+        t["act_id"] = place_train(db, child_id, trip, t, dry)
+        t.update(trip=child_id, dirty=False)
+
+    if not dry:
+        state_ref.set({
+            "processed": sorted(processed)[-3000:],
+            "trains": {k: v for k, v in trains.items() if v["date"] >= today},
+            "updated_at": now_iso(),
+        })
+
+
 def my_trips(db, me: str, today: str) -> list[tuple[str, dict]]:
     """(child id, trip) for every trip the mailbox owner is on that has not ended."""
     out = []
@@ -1879,6 +2081,12 @@ def main() -> None:
                 import_bookings(db, gmail, me, today, args.dry_run)
         except Exception as e:
             print(f"bookings ERROR: {e!r}")
+        try:
+            # Before the Muse step: the legs decide which city each meal is booked in.
+            if me:
+                import_trains(db, gmail, me, today, args.dry_run)
+        except Exception as e:
+            print(f"trains ERROR: {e!r}")
         try:
             if me:
                 import_muse_updates(db, gmail, me, today, args.dry_run)
