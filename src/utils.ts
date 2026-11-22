@@ -16,10 +16,18 @@ export function docsForActivity<D extends DocLike>(
   docs: D[] | undefined,
   a: { date: string; note?: string; activity: string; is_flight?: boolean },
 ): D[] {
-  return (docs ?? []).filter(d =>
-    (d.confirmation && (a.note ?? '').includes(d.confirmation))
-    || (d.date === a.date && ((d.kind === 'flight' && a.is_flight) || (d.kind === 'train' && !a.is_flight && /→|->/.test(a.activity)))),
-  );
+  const fold = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9一-鿿]/g, '');
+  const name = fold(a.activity);
+  return (docs ?? []).filter(d => {
+    if (d.confirmation && (a.note ?? '').includes(d.confirmation)) return true;
+    if (d.date !== a.date) return false;
+    if (d.kind === 'flight') return !!a.is_flight;
+    if (d.kind === 'train') return !a.is_flight && /→|->/.test(a.activity);
+    // Gemini reads a code off a ticket differently from the email ("HONBSHE/1"
+    // vs 0542420NBSHE), so a venue ticket also matches by place on the day.
+    const title = fold((d as DocLike & { title?: string }).title ?? '');
+    return !a.is_flight && name.length >= 4 && title.length >= 4 && (title.includes(name) || name.includes(title));
+  });
 }
 
 export function docsForStay<D extends DocLike>(docs: D[] | undefined, s: { check_in: string; confirmation?: string }): D[] {
