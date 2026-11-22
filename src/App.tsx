@@ -763,6 +763,7 @@ export default function App() {
 
   // Work out each transfer once and keep it on the flight, like travel times.
   const transferInFlight = React.useRef<Set<string>>(new Set());
+  const enrichingIds = React.useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!selectedTrip || !activeTab) return;
     for (const { dir, flight, acc } of transferLegs(activeTab)) {
@@ -873,6 +874,16 @@ export default function App() {
         return { ...data, id: doc.id };
       }) as Activity[];
       setActivities(activitiesData);
+      for (const a of activitiesData) {
+        if (a.source !== 'gmail' || a.enriched || a.is_flight || enrichingIds.current.has(a.id)) continue;
+        enrichingIds.current.add(a.id);
+        const ref = doc(db, 'activities', a.id);
+        updateDoc(ref, { enriched: true }).catch(() => {});
+        if (!a.ai_advice) geminiService.getItineraryAdvice(a.activity, selectedTrip.country)
+          .then(advice => { if (advice) updateDoc(ref, { ai_advice: advice }); }).catch(() => {});
+        if (!a.photo_url) geminiService.getActivityPhoto(a.activity, selectedTrip.country)
+          .then(photoUrl => { if (photoUrl) updateDoc(ref, { photo_url: photoUrl }); }).catch(() => {});
+      }
     });
 
     const unsubExpenses = onSnapshot(expensesQuery, (snapshot) => {

@@ -206,6 +206,14 @@ export interface Activity {
   passengers?: string[];
   /** The stash idea this activity was placed from, when it came from a booking. */
   idea_id?: string;
+  /** 'gmail': written by the reservation-agent from a booking confirmation email. */
+  source?: 'gmail';
+  /**
+   * Set once the app has asked for this activity's photo and AI advice. The
+   * agent cannot (the Maps key is browser-only), so the first viewer does it;
+   * the flag keeps a failed lookup from being retried on every load.
+   */
+  enriched?: boolean;
   /**
    * Flights only: Gemini's airport <-> lodging estimate, cached the first time
    * the day is viewed. Keyed by direction; `acc_id` is the lodging it was
