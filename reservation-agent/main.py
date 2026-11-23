@@ -1640,16 +1640,218 @@ def import_trains(db, gmail, me: str, today: str, dry: bool) -> None:
         })
 
 
+# ── Flight e-tickets → flight cards ──────────────────────────────────────────
+FLIGHT_QUERY = (
+    "newer_than:180d {subject:(ticket OR billete OR e-ticket OR eticket OR itinerary OR itinerario OR booking "
+    "OR reserva OR confirmation OR confirmación OR confirmacion OR 機票 OR 電子機票 OR 行程) "
+    "from:(iberia.es OR iberia.com OR vueling.com OR ryanair.com OR aireuropa.com OR tap.pt OR flytap.com "
+    "OR easyjet.com OR evaair.com OR china-airlines.com OR starlux-airlines.com OR united.com OR delta.com "
+    "OR aa.com OR britishairways.com OR lufthansa.com OR airfrance.fr OR klm.com OR turkishairlines.com "
+    "OR emirates.com OR qatarairways.com OR expedia.com OR trip.com OR kiwi.com)}"
+)
+FLIGHT_STATE = ("agent_state", "flight_mail")
+
+
+def parse_flight_email(subject: str, sender: str, text: str, pdfs: list[bytes]) -> dict | None:
+    """Every flight segment on an e-ticket or itinerary, read from the body and the PDF ticket."""
+    text = re.sub(r"\[\]\(https?://[^)]*\)|https?://\S+", "", text)
+    text = re.sub(r"[|\s]*\n[|\s]*\n+", "\n", text)
+    prompt = f"""判斷這封信是不是已開票的機票：電子機票收據、行程確認、改票或取消通知。附件 PDF 是機票本身，以 PDF 為準。
+登機證提醒、報到提醒、行銷、哩程、還沒付款的訂單都算 other。
+
+- kind：confirmation／modification／cancellation／other
+- confirmation：訂位代號（PNR / Código de reserva，通常 5–6 碼英數）
+- passengers：票上的旅客姓名，照原文（"LU/YITING"）
+- segments：每一段航班，依序：
+  - flight_no：航空公司代碼加班號，例如 "IB8721"
+  - date：出發當地日期 YYYY-MM-DD；arrive_date：抵達當地日期
+  - depart、arrive：HH:MM 24 小時制當地時間，不要換算時區
+  - from_code、to_code：IATA 三碼；from_city、to_city：城市英文名
+  - from_tz、to_tz：機場所在地的 IANA 時區，例如 "Europe/Lisbon"
+
+寄件者：{sender}
+標題：{subject}
+內文：
+\"\"\"
+{text[:8000]}
+\"\"\""""
+    seg = {"type": "OBJECT", "properties": {k: {"type": "STRING"} for k in (
+        "flight_no", "date", "arrive_date", "depart", "arrive", "from_code", "to_code", "from_city", "to_city",
+        "from_tz", "to_tz")}}
+    client = gemini()
+    res = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[prompt, *(gtypes.Part.from_bytes(data=p, mime_type="application/pdf") for p in pdfs)],
+        config=gtypes.GenerateContentConfig(response_mime_type="application/json", response_schema={
+            "type": "OBJECT", "properties": {
+                "kind": {"type": "STRING"}, "confirmation": {"type": "STRING"},
+                "passengers": {"type": "ARRAY", "items": {"type": "STRING"}},
+                "segments": {"type": "ARRAY", "items": seg}},
+            "required": ["kind"]}),
+    )
+    r = json.loads(res.text or "{}")
+    if r.get("kind") not in HOTEL_KINDS:
+        return None
+    segs = []
+    for s in r.get("segments") or []:
+        s = {k: str(s.get(k) or "").strip() for k in seg["properties"]}
+        s["flight_no"] = re.sub(r"\s+", "", s["flight_no"]).upper()
+        for k in ("depart", "arrive"):
+            m = re.match(r"^(\d{1,2}):(\d{2})", s[k])
+            s[k] = f"{int(m.group(1)):02d}:{m.group(2)}" if m else ""
+        if re.match(r"^[A-Z0-9]{2}\d{1,4}[A-Z]?$", s["flight_no"]) and re.match(r"^\d{4}-\d{2}-\d{2}$", s["date"]) \
+                and s["depart"] and s["from_code"] and s["to_code"]:
+            segs.append(s)
+    if not segs:
+        return None
+    return {"kind": r["kind"], "confirmation": str(r.get("confirmation") or "").strip(),
+            "passengers": [str(p).strip() for p in r.get("passengers") or [] if str(p).strip()], "segments": segs}
+
+
+def merge_passengers(names: list[str]) -> list[str]:
+    """
+    One entry per person. Airlines spell a name several ways across their
+    emails ("LU/YITINGMRS", "YI TING LU", "Yi-ting Lu"): same letters, any
+    order, once the title is dropped. The mixed-case spelling is kept for show.
+    """
+    out: dict[str, str] = {}
+    for n in names:
+        letters = re.sub(r"[^a-z]", "", fold(n).lower())
+        letters = re.sub(r"(mrs|mr|ms|miss|mstr|chd)$", "", letters) if "/" in n else letters
+        key = "".join(sorted(letters))
+        if key and (key not in out or (out[key].isupper() and not n.isupper())):
+            out[key] = n
+    return sorted(out.values())
+
+
+def flight_no_of(activity: str) -> str:
+    """Same reading as flightNoOf() in utils.ts."""
+    m = re.search(r"航班:\s*([A-Z0-9]{2}\s?\d{1,4}[A-Z]?(?!\w)|[^\s(]+)", activity, re.I)
+    return re.sub(r"\s+", "", m.group(1)).upper() if m else ""
+
+
+def place_flight(db, child_id: str, trip: dict, f: dict, dry: bool) -> str | None:
+    """
+    One segment -> one flight card in the app's own form, so the flight card,
+    free_windows() and the calendar sync read it like one typed in. A flight
+    already on the trip (same number, same day) is kept: someone's own card
+    only gets the booking code added.
+    """
+    s = f["segment"]
+    acts = {d.id: d.to_dict() for d in db.collection("activities").where("trip_id", "==", child_id).stream()}
+    act_id = f.get("act_id") if f.get("act_id") in acts else next(
+        (i for i, a in acts.items() if a.get("is_flight") and a.get("date") == s["date"]
+         and flight_no_of(a.get("activity", "")) == s["flight_no"]), None)
+    mine = acts.get(act_id) or {}
+    if f["kind"] == "cancellation":
+        print(f"    cancelled: {s['flight_no']} {s['date']} #{f['confirmation']}")
+        if act_id and mine.get("source") == "gmail" and not dry:
+            db.collection("activities").document(act_id).delete()
+        return None
+
+    names = f["passengers"]
+    note = " · ".join(p for p in [
+        f"確認碼：{f['confirmation']}" if f["confirmation"] else "",
+        f"{len(names)} 人（{'、'.join(names)}）" if names else "",
+        f"抵達 {s['arrive_date']}" if s["arrive_date"] and s["arrive_date"] != s["date"] else "",
+        "（Gmail 自動匯入）"] if p)
+    fields = {
+        "trip_id": child_id, "date": s["date"], "start_time": s["depart"], "end_time": s["arrive"],
+        "activity": f"✈️ 航班: {s['flight_no']} ({s['from_code']} {s['from_city']} 🛫 {s['to_code']} {s['to_city']})".replace("  ", " "),
+        "note": note, "source": "gmail", "is_flight": True, "travel_mode": "transit",
+        **({"start_tz": s["from_tz"]} if "/" in s["from_tz"] else {}),
+        **({"end_tz": s["to_tz"]} if "/" in s["to_tz"] else {}),
+    }
+    if act_id and mine.get("source") != "gmail":
+        fields = {}
+        if f["confirmation"] and f["confirmation"] not in (mine.get("note") or ""):
+            fields["note"] = " · ".join(p for p in (mine.get("note"), f"確認碼：{f['confirmation']}") if p)
+    print(f"    {'updating' if act_id else 'adding'} {s['flight_no']} {s['from_code']}→{s['to_code']} {s['date']} "
+          f"{s['depart']}–{s['arrive']} #{f['confirmation']}")
+    if dry:
+        return act_id
+    if act_id:
+        if fields:
+            db.collection("activities").document(act_id).update(fields)
+        return act_id
+    ref = db.collection("activities").document()
+    ref.set({**fields, "id": ref.id, "map_url": "https://www.google.com/maps/search/?api=1&query="
+             + quote(f"{s['to_code']} airport", safe="")})
+    return ref.id
+
+
+def import_flights(db, gmail, me: str, today: str, dry: bool) -> None:
+    """
+    Airline e-ticket emails -> flight cards. Keyed by flight number and date:
+    two travellers' separate e-tickets for one plane (Iberia sends one email
+    per passenger) become one card listing both.
+    """
+    state_ref = db.collection(FLIGHT_STATE[0]).document(FLIGHT_STATE[1])
+    state = state_ref.get().to_dict() or {}
+    processed = set(state.get("processed") or [])
+    flights: dict[str, dict] = dict(state.get("flights") or {})
+
+    ids = []
+    req = gmail.users().messages().list(userId="me", q=FLIGHT_QUERY, maxResults=100)
+    while req is not None and len(ids) < 300:
+        page = req.execute()
+        ids += [m["id"] for m in page.get("messages", [])]
+        req = gmail.users().messages().list_next(req, page)
+    for mid in [m for m in ids if m not in processed][:MAX_NEW_PER_RUN]:
+        msg = gmail.users().messages().get(userId="me", id=mid, format="full").execute()
+        processed.add(mid)
+        if header(msg, REQ_HEADER):
+            continue
+        r = parse_flight_email(header(msg, "Subject"), header(msg, "From"), plain_text(msg["payload"]),
+                               pdf_attachments(gmail, msg))
+        if not r:
+            continue
+        sent = int(msg.get("internalDate", 0))
+        for s in r["segments"]:
+            key = f"{s['flight_no']}|{s['date']}"
+            prev = flights.get(key) or {}
+            if r["kind"] == "cancellation" and sent < int(prev.get("sent", 0)):
+                continue
+            names = merge_passengers([*(prev.get("passengers") or []), *r["passengers"]]) if r["kind"] != "cancellation" else []
+            flights[key] = {"kind": r["kind"], "confirmation": r["confirmation"] or prev.get("confirmation", ""),
+                            "passengers": names, "segment": s, "trip": prev.get("trip"), "act_id": prev.get("act_id"),
+                            "dirty": True, "sent": max(sent, int(prev.get("sent", 0)))}
+            print(f"  flight mail {mid}: {r['kind']} {s['flight_no']} {s['from_code']}→{s['to_code']} {s['date']} "
+                  f"{s['depart']}–{s['arrive']} {r['passengers']} #{r['confirmation']}")
+
+    trips = my_trips(db, me, today)
+    for key, f in sorted(flights.items(), key=lambda kv: kv[1]["sent"]):
+        d = f["segment"]["date"]
+        if not f.get("dirty") or d < today:
+            continue
+        hit = next(((cid, tr) for cid, tr in trips if tr["start_date"] <= d <= tr["end_date"]), None)
+        if hit is None:
+            continue
+        child_id, trip = hit
+        print(f"  → {trip.get('name')}")
+        if f.get("act_id") and f.get("trip") and f["trip"] != child_id and not dry:
+            db.collection("activities").document(f["act_id"]).delete()
+            f["act_id"] = None
+        f["act_id"] = place_flight(db, child_id, trip, f, dry)
+        f.update(trip=child_id, dirty=False)
+
+    if not dry:
+        state_ref.set({
+            "processed": sorted(processed)[-3000:],
+            "flights": {k: v for k, v in flights.items() if v["segment"]["date"] >= today},
+            "updated_at": now_iso(),
+        })
+
+
 # ── Ticket PDFs → Google Drive ───────────────────────────────────────────────
 DOC_QUERY = (
     'newer_than:180d has:attachment filename:pdf -subject:"muse定位串" -subject:"muse更新" '
-    "{subject:(ticket OR tickets OR billete OR billetes OR boarding OR itinerary OR itinerario OR e-ticket "
+    # No sender list: venues and hotels sell directly (tickets@sagradafamilia.org
+    # was missed by one). The subject words keep bank statements out; Gemini
+    # turns away the purchases that are not travel.
+    "subject:(ticket OR tickets OR billete OR billetes OR boarding OR itinerary OR itinerario OR e-ticket "
     "OR eticket OR booking OR reservation OR reserva OR confirmation OR confirmacion OR confirmación "
-    "OR entradas OR 機票 OR 車票 OR 門票 OR 訂位 OR 訂房 OR 行程) "
-    "from:(renfe.es OR iryo.eu OR ouigo.com OR trainline.com OR omio.com OR iberia.es OR iberia.com "
-    "OR vueling.com OR ryanair.com OR aireuropa.com OR evaair.com OR china-airlines.com OR starlux-airlines.com "
-    "OR united.com OR delta.com OR aa.com OR tap.pt OR booking.com OR airbnb.com OR expedia.com OR agoda.com "
-    "OR hotels.com OR getyourguide.com OR tiqets.com OR klook.com OR kkday.com OR viator.com)}"
+    "OR purchase OR compra OR entradas OR voucher OR 機票 OR 車票 OR 門票 OR 訂位 OR 訂房 OR 行程)"
 )
 DOC_STATE = ("agent_state", "drive_docs")
 DOC_KINDS = ("flight", "train", "hotel", "restaurant", "ticket", "tour", "other")
@@ -1771,7 +1973,7 @@ def import_documents(db, gmail, drive, me: str, today: str, dry: bool) -> None:
         print(f"  doc mail {mid}: {[n for n, _ in pdfs]} -> "
               + (f"{d['kind']} {d['date']} {d['title']} #{d['confirmation']}" if d else "not a travel document"))
         if d and d["date"] >= today:
-            pending[mid] = d
+            pending[mid] = {**d, "sent": int(msg.get("internalDate", 0))}
 
     trips = [(ref, ref.to_dict()) for ref in db.collection("trips").stream()]
     trips = [(ref, t) for ref, t in trips if (t.get("owner_id") == me or me in (t.get("shared_with") or []))
@@ -1786,6 +1988,25 @@ def import_documents(db, gmail, drive, me: str, today: str, dry: bool) -> None:
         trip["drive_folder"] = folder  # the next document for this trip goes in the same folder
         msg =gmail.users().messages().get(userId="me", id=mid, format="full").execute()
         docs = list(trip.get("documents") or [])
+        # A changed booking (new date, same code) sends a new PDF: it replaces
+        # the old one, which stays in Drive marked as superseded. An older email
+        # read after the newer one is dropped instead.
+        same = [x for x in docs if d["confirmation"] and x.get("confirmation") == d["confirmation"]
+                and x.get("kind") == d["kind"] and not x.get("source", "").startswith(f"{mid}/")]
+        if any(int(x.get("sent", 0)) > d.get("sent", 0) for x in same):
+            print("    skipped: a newer document for this booking is already there")
+            if not dry:
+                del pending[mid]
+            continue
+        for x in same:
+            print(f"    superseded {x['name']} ({x['date']})")
+            if not dry:
+                try:
+                    old = drive.files().get(fileId=x["id"], fields="name").execute()["name"]
+                    drive.files().update(fileId=x["id"], body={"name": f"（已更改）{old}"}).execute()
+                except Exception as err:
+                    print(f"    rename failed: {err!r}")
+        docs = [x for x in docs if x not in same]
         have = {x.get("source") for x in docs}
         for name, data in named_pdfs(gmail, msg):
             if f"{mid}/{name}" in have:
@@ -1800,7 +2021,8 @@ def import_documents(db, gmail, drive, me: str, today: str, dry: bool) -> None:
                 fields="id,webViewLink").execute()
             docs.append({"id": f["id"], "url": f["webViewLink"], "name": name, "title": d["title"],
                          "kind": d["kind"], "date": d["date"], "confirmation": d["confirmation"],
-                         "passenger": d["passenger"], "source": f"{mid}/{name}", "added_at": now_iso()})
+                         "passenger": d["passenger"], "source": f"{mid}/{name}", "sent": d.get("sent", 0),
+                         "added_at": now_iso()})
         if not dry:
             trip_ref.reference.update({"documents": docs})
             trip["documents"] = docs
@@ -2283,6 +2505,12 @@ def main() -> None:
                 import_trains(db, gmail, me, today, args.dry_run)
         except Exception as e:
             print(f"trains ERROR: {e!r}")
+        try:
+            # Flights set the free windows, which decide when anything else may be booked.
+            if me:
+                import_flights(db, gmail, me, today, args.dry_run)
+        except Exception as e:
+            print(f"flights ERROR: {e!r}")
         try:
             if me:
                 import_documents(db, gmail, drive_service(), me, today, args.dry_run)
