@@ -70,6 +70,8 @@ import {
   getDoc,
   setDoc,
   getDocs,
+  getDocsFromCache,
+  getDocFromCache,
   writeBatch,
   deleteField,
   Timestamp
@@ -424,6 +426,8 @@ const OVERVIEW_TAB = 'overview';
 export default function App() {
   useLang();
   const [trips, setTrips] = useState<Trip[]>([]);
+  /** False until the server has answered once, so an empty list is not shown as "no trips". */
+  const [tripsLoaded, setTripsLoaded] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState<Trip | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -579,13 +583,16 @@ export default function App() {
       if (!fbUser) {
         setCurrentUser(null);
         setTrips([]);
+        setTripsLoaded(false);
         setSelectedTrip(null);
         setIsLoginOpen(true);
         return;
       }
       try {
         const profileRef = doc(db, "users", fbUser.uid);
-        const snap = await getDoc(profileRef);
+        // The cached profile lets the trip list start loading without a server
+        // round trip first; a role change still arrives on the next visit.
+        const snap = await getDocFromCache(profileRef).catch(() => getDoc(profileRef));
         if (snap.exists()) {
           const data = snap.data() as { username?: string; email?: string; role?: 'admin' | 'user' };
           setCurrentUser({
@@ -930,12 +937,22 @@ export default function App() {
 
   const fetchTrips = async () => {
     if (!currentUser) return;
+    // Cache first so the list is on screen at once, then the server copy.
+    // Skipped once loaded: a refetch after an edit must not flash stale data.
+    if (!tripsLoaded) await loadTrips(true).catch(() => {});
+    await loadTrips(false);
+    setTripsLoaded(true);
+  };
+
+  const loadTrips = async (fromCache: boolean) => {
+    if (!currentUser) return;
+    const read = fromCache ? getDocsFromCache : getDocs;
     const tripsCollection = collection(db, "trips");
     let tripsList: Trip[] = [];
-    
+
     try {
       if (currentUser.role === 'admin') {
-        const tripsSnapshot = await getDocs(tripsCollection);
+        const tripsSnapshot = await read(tripsCollection);
         tripsList = tripsSnapshot.docs.map(doc => {
           const data = doc.data();
           // Backward compatibility: use data.id if it exists (old UUID), otherwise use doc.id
@@ -948,8 +965,8 @@ export default function App() {
         // them in sequence threw away the other's results too and the user saw
         // an empty list with nothing on screen saying why.
         const results = await Promise.allSettled([
-          getDocs(query(tripsCollection, where("shared_with", "array-contains", currentUser.id))),
-          getDocs(query(tripsCollection, where("owner_id", "==", currentUser.id))),
+          read(query(tripsCollection, where("shared_with", "array-contains", currentUser.id))),
+          read(query(tripsCollection, where("owner_id", "==", currentUser.id))),
         ]);
         const combined = results.flatMap(r => {
           if (r.status === 'rejected') {
@@ -980,7 +997,7 @@ export default function App() {
         // renders on engines with an unstable sort for the remaining ties.
         return (a.name || '').localeCompare(b.name || '');
       });
-      setTrips(tripsList);
+      if (!fromCache || tripsList.length > 0) setTrips(tripsList);
     } catch (err) {
       console.error("Error fetching trips:", err);
     }
@@ -2406,32 +2423,35 @@ export default function App() {
   function renderTripList() { return (
     <div className="h-full overflow-y-auto">
     <div className="p-4 space-y-6 max-w-2xl mx-auto">
-      <div className="flex justify-between items-center py-4 safe-top">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 py-4 safe-top">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900">{t('我的旅程')}</h1>
-          <p className="text-sm text-zinc-400 mt-1">{t('歡迎回來, {name}', { name: currentUser?.username ?? '' })}</p>
+          <p className="text-sm text-zinc-400 mt-1 truncate">{t('歡迎回來, {name}', { name: currentUser?.username ?? '' })}</p>
         </div>
-        <div className="flex gap-2">
+        {/* Labels only from sm up: four labelled buttons do not fit a phone row. */}
+        <div className="flex gap-2 items-center flex-shrink-0">
           <LangToggle />
           {currentUser?.role === 'admin' && (
-            <button 
+            <button
               onClick={() => setIsUserManagementOpen(true)}
-              className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-600 rounded-xl shadow-sm hover:bg-zinc-50 transition-colors text-sm font-bold"
-              title={t('使用者管理')}
+              className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-600 rounded-xl shadow-sm hover:bg-zinc-50 transition-colors text-sm font-bold whitespace-nowrap"
+              title={t('成員管理')}
+              aria-label={t('成員管理')}
             >
-              <Users size={18} /> {t('成員管理')}
+              <Users size={18} /> <span className="hidden sm:inline">{t('成員管理')}</span>
             </button>
           )}
           <button
             onClick={() => setIsImportingItinerary(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-600 rounded-xl shadow-sm hover:bg-zinc-50 transition-colors text-sm font-bold"
+            className="flex items-center gap-2 px-3 py-2 bg-white border border-zinc-200 text-zinc-600 rounded-xl shadow-sm hover:bg-zinc-50 transition-colors text-sm font-bold whitespace-nowrap"
             title={t('從檔案匯入行程')}
+            aria-label={t('匯入行程')}
           >
-            <FileUp size={18} /> {t('匯入行程')}
+            <FileUp size={18} /> <span className="hidden sm:inline">{t('匯入行程')}</span>
           </button>
-          <button 
+          <button
             onClick={() => setIsAddingTrip(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-zinc-900 text-white rounded-xl shadow-sm hover:bg-zinc-800 transition-colors text-sm font-bold"
+            className="flex items-center gap-2 px-3 py-2 bg-zinc-900 text-white rounded-xl shadow-sm hover:bg-zinc-800 transition-colors text-sm font-bold whitespace-nowrap ml-auto sm:ml-0"
           >
             <Plus size={18} /> {t('新增旅程')}
           </button>
@@ -2535,7 +2555,10 @@ export default function App() {
           </motion.div>
           );
         })}
-        {trips.length === 0 && (
+        {trips.length === 0 && !tripsLoaded && (
+          <div className="flex justify-center py-20 text-zinc-300"><Loader2 size={24} className="animate-spin" /></div>
+        )}
+        {trips.length === 0 && tripsLoaded && (
           <div className="text-center py-20 text-zinc-400">
             <p className="font-medium">{t('尚未建立任何旅程')}</p>
             <p className="text-sm">{t('點擊右上角按鈕開始規劃吧！')}</p>

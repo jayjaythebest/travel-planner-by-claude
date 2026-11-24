@@ -1,6 +1,6 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 // Your web app's Firebase configuration
@@ -18,7 +18,13 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+// On-device cache (IndexedDB): a phone opening the app again shows the trips
+// and each day's plan from the last visit at once, while the server copy loads
+// behind it. Listeners fire from cache first on their own; getDocs does not,
+// so fetchTrips reads the cache explicitly before going to the server.
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
 
 // Firestore security rules can only test `request.auth`, so real sign-in is
 // what makes them enforceable at all. Before this existed the rules had to be
