@@ -883,7 +883,7 @@ export default function App() {
       }) as Activity[];
       setActivities(activitiesData);
       for (const a of activitiesData) {
-        if (a.source !== 'gmail' || a.enriched || a.is_flight || /→|->/.test(a.activity) || enrichingIds.current.has(a.id)) continue;
+        if ((a.source !== 'gmail' && a.source !== 'plan') || a.enriched || a.is_flight || /→|->/.test(a.activity) || enrichingIds.current.has(a.id)) continue;
         enrichingIds.current.add(a.id);
         const ref = doc(db, 'activities', a.id);
         updateDoc(ref, { enriched: true }).catch(() => {});

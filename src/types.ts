@@ -214,8 +214,13 @@ export interface Activity {
   passengers?: string[];
   /** The stash idea this activity was placed from, when it came from a booking. */
   idea_id?: string;
-  /** 'gmail': written by the reservation-agent from a booking confirmation email. */
-  source?: 'gmail';
+  /**
+   * 'gmail': written by the reservation-agent from a booking confirmation email.
+   * 'plan': a suggested-plan stop imported outside the app (by script). Both are
+   * enriched with photo and AI advice by the first viewer; neither marks the
+   * activity as someone's own to the agent ('plan' is treated like typed-in).
+   */
+  source?: 'gmail' | 'plan';
   /**
    * Set once the app has asked for this activity's photo and AI advice. The
    * agent cannot (the Maps key is browser-only), so the first viewer does it;
