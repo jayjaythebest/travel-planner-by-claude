@@ -45,6 +45,11 @@ const TYPE_CATEGORY: [RegExp, MapPlace['category']][] = [
   [/^(tourist_attraction|museum|park|church|place_of_worship|art_gallery|historical_landmark|monument|zoo|aquarium|amusement_park|national_park|castle|beach|observation_deck|cultural_landmark|plaza)$/, 'landmark'],
 ];
 
+/** The stash's category for a Places result, primary type first. */
+export function placeCategory(types: (string | undefined)[]): MapPlace['category'] {
+  return types.filter(Boolean).map(t => TYPE_CATEGORY.find(([re]) => re.test(t!))?.[1]).find(Boolean) || 'other';
+}
+
 async function lookupPlace(hint: { name: string; lat?: number; lng?: number }): Promise<MapPlace | null> {
   const mapsKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
   if (!mapsKey) return null;
@@ -69,8 +74,7 @@ async function lookupPlace(hint: { name: string; lat?: number; lng?: number }): 
   if (!p) return null;
   const comps: { longText: string; types: string[] }[] = p.addressComponents || [];
   const comp = (...types: string[]) => types.map(t => comps.find(c => c.types.includes(t))?.longText).find(Boolean) || '';
-  const types: string[] = [p.primaryType, ...(p.types || [])].filter(Boolean);
-  const category = types.map(t => TYPE_CATEGORY.find(([re]) => re.test(t))?.[1]).find(Boolean) || 'other';
+  const category = placeCategory([p.primaryType, ...(p.types || [])]);
   return {
     title: p.displayName?.text || hint.name,
     category,

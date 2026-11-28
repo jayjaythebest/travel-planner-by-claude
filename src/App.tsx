@@ -1340,6 +1340,22 @@ export default function App() {
     setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, maps_list } : tr)));
   };
 
+  /**
+   * Read-modify-write against the server copy, not local state: two travellers
+   * importing their timelines around the same time would otherwise each write
+   * back a list missing the other's stops.
+   */
+  const handleSaveRecap = async (update: (prev: NonNullable<Trip['recap']>) => NonNullable<Trip['recap']>) => {
+    if (!selectedTrip) return;
+    const tripRef = selectedTrip;
+    const ref = doc(db, 'trips', tripRef.documentId || tripRef.id);
+    const fresh = (await getDoc(ref)).data() as Trip | undefined;
+    const recap = update(fresh?.recap ?? tripRef.recap ?? { visits: [], imported: {} });
+    await updateDoc(ref, { recap });
+    setSelectedTrip(prev => (prev && prev.id === tripRef.id ? { ...prev, recap } : prev));
+    setTrips(prev => prev.map(tr => (tr.id === tripRef.id ? { ...tr, recap } : tr)));
+  };
+
   const handleToggleReservations = async (on: boolean) => {
     if (!selectedTrip) return;
     const tripRef = selectedTrip;
@@ -2821,6 +2837,7 @@ export default function App() {
               onMarkStopBooked={handleMarkStopBooked}
               onSetMapsList={handleSetMapsList}
               onSaveTransportPlan={handleSaveTransportPlan}
+              onSaveRecap={handleSaveRecap}
               onCoverError={() => selectedTrip && loadCover(selectedTrip, true)}
             />
           ) : (

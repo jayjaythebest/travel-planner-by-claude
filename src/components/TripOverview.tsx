@@ -27,6 +27,7 @@ import { Trip, Activity, Accommodation, Expense, ChecklistItem, Idea, User, Sugg
 import { IdeaStash, isInReservations, isBookable, resNote, CATEGORY_META } from './IdeaStash';
 import { Section, useCollapsed, useForceOpen, ForceOpen } from './Section';
 import { TransportPlanner, transportLegs } from './TransportPlanner';
+import { TripRecap } from './TripRecap';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { t, useLang, getLang } from '../i18n';
@@ -469,7 +470,7 @@ function Reservations({
   );
 }
 
-const OVERVIEW_TABS = ['bookings', 'transport', 'ideas', 'days', 'more'] as const;
+const OVERVIEW_TABS = ['bookings', 'transport', 'ideas', 'days', 'more', 'recap'] as const;
 type OverviewTab = (typeof OVERVIEW_TABS)[number];
 const TAB_LABEL: Record<OverviewTab, string> = {
   bookings: '訂位與門票',
@@ -477,6 +478,7 @@ const TAB_LABEL: Record<OverviewTab, string> = {
   ideas: '靈感暫存區',
   days: '每日一覽',
   more: '航班・住宿・支出',
+  recap: '旅行回顧',
 };
 
 /** The overview sub-tab last looked at, remembered per browser like the folded sections. */
@@ -518,6 +520,7 @@ export function TripOverview({
   onMarkStopBooked,
   onSetMapsList,
   onSaveTransportPlan,
+  onSaveRecap,
 }: {
   trip: Trip;
   dates: string[];
@@ -540,6 +543,7 @@ export function TripOverview({
   onMarkStopBooked: (stopId: string) => Promise<void>;
   onSetMapsList: (url: string | null) => Promise<void>;
   onSaveTransportPlan: (key: string, plan: TransportPlan) => Promise<void>;
+  onSaveRecap: (update: (prev: NonNullable<Trip['recap']>) => NonNullable<Trip['recap']>) => Promise<void>;
 }) {
   useLang();
   const [tab, setTab] = useOverviewTab();
@@ -880,6 +884,17 @@ export function TripOverview({
               {t('還沒有訂位。餐廳、門票放進靈感暫存區後可以請 Muse 訂；確認信寄到 Gmail 會自動帶進來。')}
             </p>
           )
+        )}
+
+        {tab === 'recap' && currentUser && (
+          <TripRecap
+            trip={trip}
+            dates={dates}
+            activities={activities}
+            uid={currentUser.id}
+            onSave={onSaveRecap}
+            onJumpToDay={onJumpToDay}
+          />
         )}
 
         {tab === 'transport' && (

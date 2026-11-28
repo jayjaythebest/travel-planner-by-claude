@@ -99,6 +99,45 @@ export interface Trip {
    * has no server to send mail from.
    */
   notify_requests?: Record<string, NotifyRequest>;
+  /**
+   * Where the travellers actually went, from each member's Google Maps
+   * Timeline export. Plans drift on the day, so this is kept beside the
+   * activities rather than rewriting them: the recap is the plan compared
+   * with what happened. Only stops inside the trip's dates are kept — the
+   * export is parsed in the browser and its paths and home/work never leave it.
+   */
+  recap?: {
+    visits: RecapVisit[];
+    /** uid -> ISO time of that member's last import. */
+    imported: Record<string, string>;
+  };
+}
+
+export type RecapCategory = 'restaurant' | 'cafe' | 'bar' | 'landmark' | 'shopping' | 'stay' | 'transit' | 'other';
+
+export interface RecapVisit {
+  /** place (or coordinates) + start, so a re-import of the same file lands on the same row. */
+  id: string;
+  date: string;
+  /** Local HH:mm at the place. */
+  start: string;
+  end: string;
+  name: string;
+  address?: string;
+  lat?: number;
+  lng?: number;
+  place_id?: string;
+  maps_url?: string;
+  category: RecapCategory;
+  /**
+   * Hand-made pairing with a planned activity. A string pins it to that
+   * activity; null says "this is not anything we planned" and stops the
+   * automatic match; absent leaves it to the matcher.
+   */
+  activity_id?: string | null;
+  hidden?: boolean;
+  /** Whose timeline it came from. */
+  by: string;
 }
 
 export interface NotifyRequest {
